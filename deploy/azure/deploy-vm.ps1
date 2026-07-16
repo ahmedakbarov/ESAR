@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory)] [string] $AllowedIpCidr,
     [string] $RepositoryBranch = "main",
     [string] $SubscriptionId,
-    [string] $Location = "westeurope",
+    [string] $Location = "uksouth",
     [string] $ResourceGroup = "rg-esar-trial",
     [string] $VmName = "vm-esar-trial",
     [string] $AdminUsername = "azureuser",
@@ -30,11 +30,19 @@ function New-Secret([int] $Length = 36) {
     -join (1..$Length | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
 }
 
-Require-Command az
-if (-not (az account show 2>$null)) { az login | Out-Host }
-if ($SubscriptionId) { az account set --subscription $SubscriptionId }
+function Invoke-Az {
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $Arguments)
+    & az @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Azure CLI əmri uğursuz oldu: az $($Arguments -join ' ')"
+    }
+}
 
-$subscription = az account show --query id --output tsv
+Require-Command az
+if (-not (az account show 2>$null)) { Invoke-Az login }
+if ($SubscriptionId) { Invoke-Az account set --subscription $SubscriptionId }
+
+$subscription = Invoke-Az account show --query id --output tsv
 if (-not $subscription) { throw "Aktiv Azure subscription seçilməyib." }
 
 $nsgName = "nsg-$VmName"
@@ -44,15 +52,15 @@ $jwtKey = New-Secret 48
 $adminPassword = New-Secret
 
 Write-Host "Resource group yaradılır..." -ForegroundColor Cyan
-az group create --name $ResourceGroup --location $Location --output none
+Invoke-Az group create --name $ResourceGroup --location $Location --output none
 
 Write-Host "Şəbəkə qaydaları yaradılır..." -ForegroundColor Cyan
-az network nsg create --resource-group $ResourceGroup --name $nsgName --location $Location --output none
-az network nsg rule create --resource-group $ResourceGroup --nsg-name $nsgName --name AllowSshFromAdmin --priority 1000 --direction Inbound --access Allow --protocol Tcp --source-address-prefixes $AllowedIpCidr --destination-port-ranges 22 --output none
-az network nsg rule create --resource-group $ResourceGroup --nsg-name $nsgName --name AllowPortalFromAdmin --priority 1010 --direction Inbound --access Allow --protocol Tcp --source-address-prefixes $AllowedIpCidr --destination-port-ranges 8090 --output none
+Invoke-Az network nsg create --resource-group $ResourceGroup --name $nsgName --location $Location --output none
+Invoke-Az network nsg rule create --resource-group $ResourceGroup --nsg-name $nsgName --name AllowSshFromAdmin --priority 1000 --direction Inbound --access Allow --protocol Tcp --source-address-prefixes $AllowedIpCidr --destination-port-ranges 22 --output none
+Invoke-Az network nsg rule create --resource-group $ResourceGroup --nsg-name $nsgName --name AllowPortalFromAdmin --priority 1010 --direction Inbound --access Allow --protocol Tcp --source-address-prefixes $AllowedIpCidr --destination-port-ranges 8090 --output none
 
 Write-Host "Ubuntu VM yaradılır (bu bir neçə dəqiqə çəkə bilər)..." -ForegroundColor Cyan
-az vm create --resource-group $ResourceGroup --name $VmName --image Ubuntu2204 --size $VmSize --admin-username $AdminUsername --generate-ssh-keys --nsg $nsgName --public-ip-sku Standard --output none
+Invoke-Az vm create --resource-group $ResourceGroup --name $VmName --image Ubuntu2204 --size $VmSize --admin-username $AdminUsername --generate-ssh-keys --nsg $nsgName --public-ip-sku Standard --output none
 
 $remoteScript = @"
 set -euo pipefail
@@ -84,13 +92,13 @@ $temporaryScript = New-TemporaryFile
 try {
     Set-Content -LiteralPath $temporaryScript -Value $remoteScript -NoNewline
     Write-Host "Docker və ESAR quraşdırılır..." -ForegroundColor Cyan
-    az vm run-command invoke --resource-group $ResourceGroup --name $VmName --command-id RunShellScript --scripts "@$temporaryScript" --output none
+    Invoke-Az vm run-command invoke --resource-group $ResourceGroup --name $VmName --command-id RunShellScript --scripts "@$temporaryScript" --output none
 }
 finally {
     Remove-Item -LiteralPath $temporaryScript -Force -ErrorAction SilentlyContinue
 }
 
-$publicIp = az vm show -d --resource-group $ResourceGroup --name $VmName --query publicIps --output tsv
+$publicIp = Invoke-Az vm show -d --resource-group $ResourceGroup --name $VmName --query publicIps --output tsv
 $result = [ordered]@{
     subscriptionId = $subscription
     resourceGroup = $ResourceGroup

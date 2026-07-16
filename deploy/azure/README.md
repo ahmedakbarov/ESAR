@@ -17,6 +17,9 @@ Bu script mövcud Docker Compose stack-ini bir Ubuntu VM-də qaldırır. Yalnız
   -AllowedIpCidr "YOUR_PUBLIC_IP/32"
 ```
 
+Standart region `uksouth`-dur. Subscription həmin regionu qəbul etməzsə,
+Azure Portal-da trial üçün əlçatan region seçib `-Location "REGION"` əlavə edin.
+
 Nəticə URL-ləri və ilkin admin parolu `esar-azure-deployment.json` faylında saxlanılır. Bu faylı gizli saxlayın.
 
 ## Silmək
