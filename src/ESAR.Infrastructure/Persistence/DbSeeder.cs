@@ -3,6 +3,7 @@ using Esar.Application.Contracts;
 using Esar.Application.Matching;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using MatchType = Esar.Domain.Enums.MatchType;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 

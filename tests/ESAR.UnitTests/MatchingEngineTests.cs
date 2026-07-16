@@ -5,6 +5,7 @@ using Esar.Application.Matching;
 using Esar.Application.Normalization;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using MatchType = Esar.Domain.Enums.MatchType;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;

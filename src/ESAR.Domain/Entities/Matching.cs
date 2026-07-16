@@ -1,5 +1,6 @@
 using Esar.Domain.Common;
 using Esar.Domain.Enums;
+using MatchType = Esar.Domain.Enums.MatchType;
 
 namespace Esar.Domain.Entities;
 

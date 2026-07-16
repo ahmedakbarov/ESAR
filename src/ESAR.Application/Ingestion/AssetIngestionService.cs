@@ -5,6 +5,7 @@ using Esar.Application.Matching;
 using Esar.Application.Merging;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using MatchType = Esar.Domain.Enums.MatchType;
 using Microsoft.Extensions.Logging;
 
 namespace Esar.Application.Ingestion;
