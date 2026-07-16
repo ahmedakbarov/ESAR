@@ -1,6 +1,8 @@
 # Azure trial deployment
 
 Bu script mövcud Docker Compose stack-ini bir Ubuntu VM-də qaldırır. Yalnız test üçündür.
+Skript PostgreSQL, RabbitMQ, JWT, ilkin admin və AES-256 connector-secret açarlarını
+öz-özünə yaradır; onları Git-ə yazmır.
 
 ## Tələblər
 
@@ -21,6 +23,9 @@ Standart region `uksouth`-dur. Subscription həmin regionu qəbul etməzsə,
 Azure Portal-da trial üçün əlçatan region seçib `-Location "REGION"` əlavə edin.
 
 Nəticə URL-ləri və ilkin admin parolu `esar-azure-deployment.json` faylında saxlanılır. Bu faylı gizli saxlayın.
+
+Portal yalnız HTTP ilə açılır (`http://...:8090`), yəni bu quraşdırma internetə açıq
+production mühiti üçün deyil. Testi yalnız `AllowedIpCidr` ilə öz IP ünvanınıza məhdud saxlayın.
 
 ## Silmək
 

@@ -50,6 +50,9 @@ $postgresPassword = New-Secret
 $rabbitPassword = New-Secret
 $jwtKey = New-Secret 48
 $adminPassword = New-Secret
+$encryptionKeyBytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($encryptionKeyBytes)
+$encryptionKey = [Convert]::ToBase64String($encryptionKeyBytes)
 
 Write-Host "Resource group yaradılır..." -ForegroundColor Cyan
 Invoke-Az group create --name $ResourceGroup --location $Location --output none
@@ -80,6 +83,7 @@ cat > /opt/esar/.env <<'EOF'
 POSTGRES_PASSWORD=$postgresPassword
 RABBITMQ_PASSWORD=$rabbitPassword
 JWT_SIGNING_KEY=$jwtKey
+ENCRYPTION_KEY=$encryptionKey
 ADMIN_PASSWORD=$adminPassword
 ASPNETCORE_ENVIRONMENT=Production
 EOF
