@@ -34,6 +34,7 @@ builder.Services.AddScoped<DiscoveryJobs>();
 builder.Services.AddScoped<ComplianceJobs>();
 builder.Services.AddScoped<MaintenanceJobs>();
 builder.Services.AddScoped<NotificationJobs>();
+builder.Services.AddScoped<AssetScoringJobs>();
 
 builder.Services.AddHostedService<JobSchedulerService>();
 builder.Services.AddHostedService<RabbitMqConsumerService>();

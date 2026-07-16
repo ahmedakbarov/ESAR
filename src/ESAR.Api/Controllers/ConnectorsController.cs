@@ -169,6 +169,32 @@ public class ConnectorsController : ControllerBase
             job.AssetsUpdated, job.AssetsFailed });
     }
 
+    /// <summary>Operational metrics: success rate, throughput and durations (last 30 days).</summary>
+    [HttpGet("{id:guid}/metrics")]
+    [Authorize("connectors.read")]
+    public async Task<IActionResult> Metrics(Guid id, CancellationToken ct)
+    {
+        var since = DateTime.UtcNow.AddDays(-30);
+        var jobs = await _uow.ConnectorJobs.ListAsync(j => j.ConnectorId == id && j.CreatedAt >= since, ct);
+        var completed = jobs.Where(j => j.StartedAt != null && j.CompletedAt != null).ToList();
+        var succeeded = jobs.Count(j => j.Status == JobStatus.Succeeded);
+        return Ok(new
+        {
+            windowDays = 30,
+            totalRuns = jobs.Count,
+            succeeded,
+            failed = jobs.Count(j => j.Status == JobStatus.Failed),
+            successRate = jobs.Count == 0 ? 0 : Math.Round(100.0 * succeeded / jobs.Count, 1),
+            assetsDiscovered = jobs.Sum(j => j.AssetsDiscovered),
+            assetsCreated = jobs.Sum(j => j.AssetsCreated),
+            assetsUpdated = jobs.Sum(j => j.AssetsUpdated),
+            assetsFailed = jobs.Sum(j => j.AssetsFailed),
+            avgDurationSeconds = completed.Count == 0 ? 0 :
+                Math.Round(completed.Average(j => (j.CompletedAt! - j.StartedAt!).Value.TotalSeconds), 1),
+            lastRun = jobs.OrderByDescending(j => j.CreatedAt).FirstOrDefault()?.CreatedAt
+        });
+    }
+
     /// <summary>Execution history for a connector.</summary>
     [HttpGet("{id:guid}/jobs")]
     [Authorize("connectors.read")]

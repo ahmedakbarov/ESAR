@@ -18,16 +18,28 @@ public interface IEventBus
     Task PublishAsync(string topic, object payload, CancellationToken ct = default);
 }
 
+/// <summary>
+/// Standardized event catalog. Every topic is published to the RabbitMQ topic
+/// exchange (esar.events) as JSON — the integration contract for SIEM/SOAR/GRC consumers.
+/// </summary>
 public static class EventTopics
 {
     public const string AssetDiscovered = "esar.asset.discovered";
     public const string AssetCreated = "esar.asset.created";
     public const string AssetUpdated = "esar.asset.updated";
+    public const string AssetDeleted = "esar.asset.deleted";
     public const string AssetMerged = "esar.asset.merged";
     public const string IncidentCreated = "esar.incident.created";
     public const string NotificationQueued = "esar.notification.queued";
     public const string ComplianceEvaluated = "esar.compliance.evaluated";
+    public const string ComplianceFailed = "esar.compliance.failed";
+    public const string PolicyViolation = "esar.policy.violation";
+    public const string ConnectorFailed = "esar.connector.failed";
     public const string ConnectorJobCompleted = "esar.connector.job.completed";
+    public const string SynchronizationCompleted = "esar.sync.completed";
+    public const string DataQualityDegraded = "esar.dataquality.degraded";
+    public const string ApprovalRequested = "esar.approval.requested";
+    public const string ApprovalDecided = "esar.approval.decided";
 }
 
 public interface ICurrentUserService

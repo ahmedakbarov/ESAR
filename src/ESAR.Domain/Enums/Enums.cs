@@ -227,6 +227,51 @@ public enum ReportFormat
     Csv
 }
 
+/// <summary>Directed relationship between two assets (source → target).</summary>
+public enum RelationshipType
+{
+    DependsOn = 1,      // source depends on target
+    RunsOn,             // VM runs on hypervisor / app runs on server
+    Hosts,              // inverse of RunsOn
+    MemberOfCluster,
+    Contains,           // storage/system contains component
+    ConnectedTo,        // network adjacency
+    Uses,               // app uses database/service
+    PartOfService,      // asset belongs to a business service
+    ProtectedBy,        // firewall / WAF protection
+    BackedUpBy
+}
+
+/// <summary>Remediation workflow state for a non-compliant control.</summary>
+public enum RemediationState
+{
+    None = 0,
+    PendingReview,
+    WaitingSiemOnboarding,
+    WaitingEdrInstallation,
+    WaitingAgentInstallation,
+    WaitingOwnerApproval,
+    InRemediation,
+    RiskAccepted,
+    FullyCompliant
+}
+
+public enum ApprovalType
+{
+    NewAsset = 1,
+    AssetMerge,
+    OwnershipChange,
+    MetadataChange
+}
+
+public enum ApprovalStatus
+{
+    Pending = 0,
+    Approved,
+    Rejected,
+    Cancelled
+}
+
 public enum ReportType
 {
     AssetInventory = 1,

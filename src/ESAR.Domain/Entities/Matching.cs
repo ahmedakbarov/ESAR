@@ -16,6 +16,8 @@ public class MatchingRule : AuditableEntity
     /// <summary>Evaluation order; hard rules with lower order win first.</summary>
     public int Order { get; set; }
     public bool Enabled { get; set; } = true;
+    /// <summary>Incremented on every change — rule versioning for audit/explainability.</summary>
+    public int Version { get; set; } = 1;
 }
 
 /// <summary>

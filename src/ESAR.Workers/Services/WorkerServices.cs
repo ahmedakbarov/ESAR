@@ -44,6 +44,10 @@ public class JobSchedulerService : BackgroundService
             j => j.MonitorConnectorHealthAsync(CancellationToken.None), "*/30 * * * *");
         _recurringJobs.AddOrUpdate<NotificationJobs>("notification-dispatch",
             j => j.DispatchPendingAsync(CancellationToken.None), "* * * * *");
+        _recurringJobs.AddOrUpdate<AssetScoringJobs>("asset-scoring",
+            j => j.RecalculateAllAsync(CancellationToken.None), "15 */6 * * *");
+        _recurringJobs.AddOrUpdate<AssetScoringJobs>("duplicate-ip-detection",
+            j => j.DetectDuplicateIpsAsync(CancellationToken.None), "45 */12 * * *");
 
         // Connector jobs follow DB configuration; refresh periodically so edits apply without restart.
         while (!stoppingToken.IsCancellationRequested)
@@ -149,7 +153,15 @@ public class RabbitMqConsumerService : BackgroundService
         _connection = factory.CreateConnection("esar-workers");
         _channel = _connection.CreateModel();
         _channel.ExchangeDeclare(_options.Exchange, ExchangeType.Topic, durable: true);
-        var queue = _channel.QueueDeclare("esar.workers", durable: true, exclusive: false, autoDelete: false).QueueName;
+
+        // Dead-letter infrastructure: rejected messages land in esar.dead-letter for inspection/replay.
+        _channel.ExchangeDeclare("esar.dlx", ExchangeType.Fanout, durable: true);
+        _channel.QueueDeclare("esar.dead-letter", durable: true, exclusive: false, autoDelete: false);
+        _channel.QueueBind("esar.dead-letter", "esar.dlx", string.Empty);
+
+        var queueArgs = new Dictionary<string, object> { ["x-dead-letter-exchange"] = "esar.dlx" };
+        var queue = _channel.QueueDeclare("esar.workers", durable: true, exclusive: false, autoDelete: false,
+            arguments: queueArgs).QueueName;
         _channel.QueueBind(queue, _options.Exchange, "esar.connector.run");
         _channel.QueueBind(queue, _options.Exchange, EventTopics.NotificationQueued);
         _channel.BasicQos(0, 20, false);

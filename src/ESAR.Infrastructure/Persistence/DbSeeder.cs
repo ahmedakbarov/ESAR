@@ -20,6 +20,7 @@ public static class DbSeeder
         await SeedSourcePrioritiesAsync(db, ct);
         await SeedSettingsAsync(db, ct);
         await SeedNotificationTemplatesAsync(db, ct);
+        await SeedCompliancePoliciesAsync(db, ct);
         await db.SaveChangesAsync(ct);
     }
 
@@ -28,9 +29,11 @@ public static class DbSeeder
         string[] permissionCodes =
         {
             "assets.read", "assets.write", "assets.delete", "assets.merge", "assets.import",
-            "compliance.read", "matching.read", "matching.review", "connectors.read", "connectors.manage",
-            "incidents.read", "incidents.manage", "reports.read", "reports.generate",
-            "audit.read", "users.manage", "roles.manage", "settings.manage", "notifications.manage"
+            "compliance.read", "compliance.manage", "matching.read", "matching.review",
+            "connectors.read", "connectors.manage", "incidents.read", "incidents.manage",
+            "reports.read", "reports.generate", "audit.read", "users.manage", "roles.manage",
+            "settings.manage", "notifications.manage", "policies.manage", "relationships.manage",
+            "approvals.decide"
         };
         foreach (var code in permissionCodes)
         {
@@ -45,9 +48,10 @@ public static class DbSeeder
             ["Administrator"] = permissionCodes,
             ["SecurityAnalyst"] = new[]
             {
-                "assets.read", "assets.write", "assets.merge", "compliance.read", "matching.read",
-                "matching.review", "incidents.read", "incidents.manage", "reports.read", "reports.generate",
-                "connectors.read", "audit.read"
+                "assets.read", "assets.write", "assets.merge", "compliance.read", "compliance.manage",
+                "matching.read", "matching.review", "incidents.read", "incidents.manage",
+                "reports.read", "reports.generate", "connectors.read", "audit.read",
+                "relationships.manage", "approvals.decide"
             },
             ["Auditor"] = new[] { "assets.read", "compliance.read", "matching.read", "incidents.read",
                 "reports.read", "audit.read", "connectors.read" },
@@ -170,7 +174,10 @@ public static class DbSeeder
             (SettingKeys.DecommissionAfterDays, "90", "Days without telemetry before automatic decommission"),
             (SettingKeys.ComplianceEvidenceMaxAgeDays, "7", "Max age of source evidence for compliance controls"),
             ("notifications.defaultRecipient", "soc@example.com", "Default notification recipient"),
-            ("reports.outputDirectory", "/data/reports", "Directory where generated reports are stored")
+            ("reports.outputDirectory", "/data/reports", "Directory where generated reports are stored"),
+            (SettingKeys.ApprovalRequireForNewAssets, "false",
+                "When true, newly discovered assets stay in Planned lifecycle until an owner approves them"),
+            ("dataquality.alertBelowScore", "50", "Publish DataQualityDegraded event when an asset scores below this")
         };
         foreach (var (key, value, description) in defaults)
         {
@@ -206,5 +213,70 @@ public static class DbSeeder
             BodyTemplate = "Asset {{asset}} is non-compliant. Score: {{score}}. Missing: {{missing}}",
             CreatedBy = "seed"
         });
+    }
+
+    /// <summary>Default security-baseline policies per asset class. Fully editable via the portal/API.</summary>
+    private static async Task SeedCompliancePoliciesAsync(EsarDbContext db, CancellationToken ct)
+    {
+        if (await db.CompliancePolicies.AnyAsync(ct)) return;
+
+        static string Json(params string[] values) =>
+            System.Text.Json.JsonSerializer.Serialize(values);
+
+        db.CompliancePolicies.AddRange(
+            new CompliancePolicy
+            {
+                Name = "Windows/Linux Server Baseline",
+                Description = "Full control set for server operating systems",
+                Priority = 10,
+                AppliesToAssetTypesJson = Json("WindowsServer", "LinuxServer", "PhysicalServer", "VirtualMachine"),
+                RequiredControlsJson = Json("SiemLogSource", "Edr", "Antivirus", "VulnerabilityScanner",
+                    "MonitoringAgent", "BackupAgent", "PatchStatus", "DiskEncryption", "AssetClassification"),
+                MandatoryControlsJson = Json("SiemLogSource", "Edr", "VulnerabilityScanner"),
+                CreatedBy = "seed"
+            },
+            new CompliancePolicy
+            {
+                Name = "Cloud Instance Baseline",
+                Description = "Cloud workloads: SIEM, EDR, vulnerability scanning and classification",
+                Priority = 20,
+                AppliesToAssetTypesJson = Json("CloudInstance", "Container", "KubernetesNode"),
+                RequiredControlsJson = Json("SiemLogSource", "Edr", "VulnerabilityScanner",
+                    "MonitoringAgent", "PatchStatus", "AssetClassification"),
+                MandatoryControlsJson = Json("SiemLogSource", "VulnerabilityScanner"),
+                CreatedBy = "seed"
+            },
+            new CompliancePolicy
+            {
+                Name = "Workstation Baseline",
+                Description = "End-user devices: EDR, AV, patching and disk encryption",
+                Priority = 30,
+                AppliesToAssetTypesJson = Json("Workstation"),
+                RequiredControlsJson = Json("Edr", "Antivirus", "PatchStatus", "DiskEncryption",
+                    "AssetClassification"),
+                MandatoryControlsJson = Json("Edr", "Antivirus"),
+                CreatedBy = "seed"
+            },
+            new CompliancePolicy
+            {
+                Name = "Network Device Baseline",
+                Description = "Network gear cannot run agents — SIEM logging, backup and classification",
+                Priority = 40,
+                AppliesToAssetTypesJson = Json("NetworkDevice", "Firewall", "LoadBalancer", "Switch", "Router"),
+                RequiredControlsJson = Json("SiemLogSource", "BackupAgent", "PatchStatus", "AssetClassification"),
+                MandatoryControlsJson = Json("SiemLogSource"),
+                CreatedBy = "seed"
+            },
+            new CompliancePolicy
+            {
+                Name = "Database & Storage Baseline",
+                Description = "Data platforms: logging, backup, monitoring and classification",
+                Priority = 50,
+                AppliesToAssetTypesJson = Json("Database", "StorageSystem"),
+                RequiredControlsJson = Json("SiemLogSource", "BackupAgent", "MonitoringAgent",
+                    "DiskEncryption", "AssetClassification"),
+                MandatoryControlsJson = Json("SiemLogSource", "BackupAgent"),
+                CreatedBy = "seed"
+            });
     }
 }

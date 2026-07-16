@@ -76,18 +76,42 @@ export default function Matching() {
       </div>
 
       <h2 className="section-title">Matching Rules</h2>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        Weights, order and activation are fully configurable — changes apply within 5 minutes (rule cache TTL).
+      </p>
       <div className="card">
         <table className="data">
-          <thead><tr><th>Rule</th><th>Attribute</th><th>Type</th><th>Weight</th><th>Order</th><th>Enabled</th></tr></thead>
+          <thead><tr><th>Rule</th><th>Attribute</th><th>Type</th><th>Weight</th><th>Order</th>
+            <th>Enabled</th><th>Version</th><th></th></tr></thead>
           <tbody>
             {rules.map((r) => (
               <tr key={r.id}>
                 <td>{r.name}</td>
                 <td className="muted">{r.attribute}</td>
                 <td><Badge value={r.matchType} /></td>
-                <td>{r.weight}</td>
-                <td>{r.order}</td>
-                <td>{r.enabled ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
+                <td>
+                  <input type="number" step="0.05" min="0" max="1" defaultValue={r.weight}
+                    style={{ width: 80 }} onChange={(e) => (r._weight = e.target.value)} />
+                </td>
+                <td>
+                  <input type="number" defaultValue={r.order} style={{ width: 70 }}
+                    onChange={(e) => (r._order = e.target.value)} />
+                </td>
+                <td>
+                  <input type="checkbox" defaultChecked={r.enabled}
+                    onChange={(e) => (r._enabled = e.target.checked)} />
+                </td>
+                <td className="muted">v{r.version ?? 1}</td>
+                <td>
+                  <button className="secondary" onClick={async () => {
+                    await client.put(`/matching/rules/${r.id}`, {
+                      weight: Number(r._weight ?? r.weight),
+                      order: Number(r._order ?? r.order),
+                      enabled: r._enabled ?? r.enabled,
+                    });
+                    load();
+                  }}>Save</button>
+                </td>
               </tr>
             ))}
           </tbody>

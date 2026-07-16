@@ -85,9 +85,11 @@ builder.Services.AddAuthorization(options =>
     string[] permissions =
     {
         "assets.read", "assets.write", "assets.delete", "assets.merge", "assets.import",
-        "compliance.read", "matching.read", "matching.review", "connectors.read", "connectors.manage",
-        "incidents.read", "incidents.manage", "reports.read", "reports.generate",
-        "audit.read", "users.manage", "roles.manage", "settings.manage", "notifications.manage"
+        "compliance.read", "compliance.manage", "matching.read", "matching.review",
+        "connectors.read", "connectors.manage", "incidents.read", "incidents.manage",
+        "reports.read", "reports.generate", "audit.read", "users.manage", "roles.manage",
+        "settings.manage", "notifications.manage", "policies.manage", "relationships.manage",
+        "approvals.decide"
     };
     foreach (var permission in permissions)
     {

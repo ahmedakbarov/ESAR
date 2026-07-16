@@ -188,6 +188,7 @@ public class MatchingController : ControllerBase
         rule.Weight = update.Weight;
         rule.Order = update.Order;
         rule.Enabled = update.Enabled;
+        rule.Version++;
         rule.UpdatedAt = DateTime.UtcNow;
         _uow.MatchingRules.Update(rule);
         await _uow.SaveChangesAsync(ct);
@@ -259,5 +260,53 @@ public class ComplianceController : ControllerBase
         var assetIds = failing.Select(f => f.AssetId).Distinct().ToList();
         var assets = await _uow.Assets.ListAsync(a => assetIds.Contains(a.Id), ct);
         return Ok(assets.Select(Esar.Application.Assets.AssetDto.From));
+    }
+
+    /// <summary>Remediation workflow board: non-compliant controls grouped by workflow state.</summary>
+    [HttpGet("remediation")]
+    [Authorize("compliance.read")]
+    public async Task<IActionResult> RemediationBoard(CancellationToken ct)
+    {
+        var open = await _uow.AssetCompliance.ListAsync(c => c.Status == ComplianceStatus.NonCompliant, ct);
+        var assetIds = open.Select(c => c.AssetId).Distinct().ToList();
+        var assets = (await _uow.Assets.ListAsync(a => assetIds.Contains(a.Id), ct)).ToDictionary(a => a.Id);
+        return Ok(open
+            .GroupBy(c => c.RemediationState.ToString())
+            .ToDictionary(g => g.Key, g => g.Select(c => new
+            {
+                c.Id,
+                c.AssetId,
+                Hostname = assets.TryGetValue(c.AssetId, out var a) ? a.Hostname : null,
+                Control = c.Control.ToString(),
+                c.Details,
+                c.RemediationAssignee,
+                c.RemediationNotes,
+                c.CheckedAt
+            }).ToList()));
+    }
+
+    public record RemediationUpdate(string State, string? Notes, string? Assignee);
+
+    /// <summary>Moves a non-compliant control through the remediation workflow.</summary>
+    [HttpPatch("records/{recordId:guid}/remediation")]
+    [Authorize("compliance.manage")]
+    public async Task<IActionResult> UpdateRemediation(Guid recordId, [FromBody] RemediationUpdate update,
+        [FromServices] Esar.Application.Auditing.IAuditService audit, CancellationToken ct)
+    {
+        if (!Enum.TryParse<RemediationState>(update.State, true, out var state))
+            return BadRequest(new { error = $"Unknown state '{update.State}'.",
+                validStates = Enum.GetNames<RemediationState>() });
+        var record = await _uow.AssetCompliance.GetByIdAsync(recordId, ct);
+        if (record is null) return NotFound();
+
+        record.RemediationState = state;
+        record.RemediationNotes = update.Notes ?? record.RemediationNotes;
+        record.RemediationAssignee = update.Assignee ?? record.RemediationAssignee;
+        record.UpdatedAt = DateTime.UtcNow;
+        _uow.AssetCompliance.Update(record);
+        await _uow.SaveChangesAsync(ct);
+        await audit.LogAsync(AuditAction.ComplianceDecision, nameof(AssetCompliance), recordId.ToString(),
+            new { state = state.ToString(), update.Assignee }, ct);
+        return Ok(new { record.Id, State = record.RemediationState.ToString() });
     }
 }

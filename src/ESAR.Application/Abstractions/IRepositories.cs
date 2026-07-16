@@ -34,8 +34,12 @@ public interface IUnitOfWork
 {
     IAssetRepository Assets { get; }
     IRepository<AssetSource> AssetSources { get; }
+    IRepository<AssetIp> AssetIps { get; }
     IRepository<AssetHistory> AssetHistories { get; }
     IRepository<AssetCompliance> AssetCompliance { get; }
+    IRepository<AssetRelationship> Relationships { get; }
+    IRepository<CompliancePolicy> CompliancePolicies { get; }
+    IRepository<ApprovalRequest> Approvals { get; }
     IRepository<MatchingRule> MatchingRules { get; }
     IRepository<MatchRecord> MatchRecords { get; }
     IRepository<SourcePriority> SourcePriorities { get; }

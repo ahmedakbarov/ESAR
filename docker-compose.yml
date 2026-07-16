@@ -94,7 +94,9 @@ services:
       rabbitmq:
         condition: service_healthy
       esar-api:
-        condition: service_started
+        # The API initializes the application schema. Starting Hangfire first
+        # creates its tables and prevents EF EnsureCreated from creating ours.
+        condition: service_healthy
 
   esar-web:
     build:

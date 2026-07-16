@@ -40,10 +40,14 @@ public class Asset : AuditableEntity
     public string? CloudSubscriptionId { get; set; }
     public string? CloudAccountId { get; set; }
 
-    // Health / compliance summary (denormalized for fast dashboards)
+    // Health / compliance / quality summary (denormalized for fast dashboards)
     public int HealthScore { get; set; } = 100;
     public decimal ComplianceScore { get; set; }
     public ComplianceStatus ComplianceStatus { get; set; } = ComplianceStatus.Unknown;
+    /// <summary>0–100 completeness/consistency score computed by the data quality engine.</summary>
+    public decimal DataQualityScore { get; set; } = 100;
+    /// <summary>Open data quality issues (jsonb array of issue codes with details).</summary>
+    public string DataQualityIssuesJson { get; set; } = "[]";
 
     public DateTime FirstSeen { get; set; } = DateTime.UtcNow;
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;

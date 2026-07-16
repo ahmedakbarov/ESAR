@@ -37,6 +37,36 @@ public class AssetsController : ControllerBase
     public async Task<IActionResult> History(Guid id, CancellationToken ct)
         => Ok(await _mediator.Send(new GetAssetHistoryQuery(id), ct));
 
+    /// <summary>
+    /// Unified timeline: field changes, matching decisions and compliance evaluations
+    /// merged chronologically — the full lifecycle from discovery to retirement.
+    /// </summary>
+    [HttpGet("{id:guid}/timeline")]
+    [Authorize("assets.read")]
+    public async Task<IActionResult> Timeline(Guid id,
+        [FromServices] Esar.Application.Abstractions.IUnitOfWork uow,
+        [FromQuery] int limit = 200, CancellationToken ct = default)
+    {
+        var history = await uow.AssetHistories.ListAsync(h => h.AssetId == id, ct);
+        var matches = await uow.MatchRecords.ListAsync(m => m.MatchedAssetId == id || m.CreatedAssetId == id, ct);
+        var compliance = await uow.AssetCompliance.ListAsync(c => c.AssetId == id, ct);
+
+        var timeline = history
+            .Select(h => new TimelineEntry(h.ChangedAt, "FieldChange",
+                $"{h.FieldName}: '{h.OldValue ?? "∅"}' → '{h.NewValue ?? "∅"}'", h.ChangedBy))
+            .Concat(matches.Select(m => new TimelineEntry(m.CreatedAt, "MatchingDecision",
+                $"{m.Decision} from {m.SourceConnector} (score {m.ConfidenceScore:0.00})",
+                m.ReviewedBy ?? "matching-engine")))
+            .Concat(compliance.Select(c => new TimelineEntry(c.CheckedAt, "ComplianceCheck",
+                $"{c.Control}: {c.Status} — {c.Details}", "compliance-engine")))
+            .OrderByDescending(e => e.At)
+            .Take(Math.Clamp(limit, 1, 1000))
+            .ToList();
+        return Ok(timeline);
+    }
+
+    public record TimelineEntry(DateTime At, string Kind, string Summary, string Actor);
+
     [HttpPost]
     [Authorize("assets.write")]
     public async Task<ActionResult<AssetDto>> Create([FromBody] CreateAssetCommand command, CancellationToken ct)

@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using Esar.Application.Abstractions;
 using Esar.Application.Common;
 using Esar.Application.Contracts;
@@ -60,22 +61,52 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
 
         if (!string.IsNullOrWhiteSpace(c.Search))
         {
-            var term = $"%{c.Search.Trim()}%";
-            query = query.Where(a =>
-                EF.Functions.ILike(a.Hostname, term) ||
-                EF.Functions.ILike(a.Fqdn ?? "", term) ||
-                EF.Functions.ILike(a.OwnerName ?? "", term) ||
-                a.IpAddresses.Any(ip => EF.Functions.ILike(ip.IpAddress, term)) ||
-                EF.Functions.ILike(a.SerialNumber ?? "", term));
+            if (c.UseRegex)
+            {
+                // Npgsql translates Regex.IsMatch to the PostgreSQL ~ operator.
+                var pattern = c.Search.Trim();
+                query = query.Where(a =>
+                    Regex.IsMatch(a.Hostname, pattern) ||
+                    (a.Fqdn != null && Regex.IsMatch(a.Fqdn, pattern)));
+            }
+            else
+            {
+                var term = $"%{c.Search.Trim()}%";
+                query = query.Where(a =>
+                    EF.Functions.ILike(a.Hostname, term) ||
+                    EF.Functions.ILike(a.Fqdn ?? "", term) ||
+                    EF.Functions.ILike(a.OwnerName ?? "", term) ||
+                    a.IpAddresses.Any(ip => EF.Functions.ILike(ip.IpAddress, term)) ||
+                    EF.Functions.ILike(a.SerialNumber ?? "", term));
+            }
         }
         if (TryEnum<AssetType>(c.AssetType, out var type)) query = query.Where(a => a.AssetType == type);
         if (TryEnum<AssetStatus>(c.Status, out var status)) query = query.Where(a => a.Status == status);
+        if (TryEnum<LifecycleStatus>(c.LifecycleStatus, out var lifecycle))
+            query = query.Where(a => a.LifecycleStatus == lifecycle);
         if (TryEnum<EnvironmentType>(c.Environment, out var env)) query = query.Where(a => a.Environment == env);
         if (TryEnum<CriticalityLevel>(c.Criticality, out var crit)) query = query.Where(a => a.Criticality == crit);
         if (TryEnum<ComplianceStatus>(c.ComplianceStatus, out var comp)) query = query.Where(a => a.ComplianceStatus == comp);
         if (!string.IsNullOrWhiteSpace(c.BusinessUnit)) query = query.Where(a => a.BusinessUnit == c.BusinessUnit);
+        if (!string.IsNullOrWhiteSpace(c.Owner))
+            query = query.Where(a => EF.Functions.ILike(a.OwnerName ?? "", $"%{c.Owner.Trim()}%"));
         if (TryEnum<ConnectorType>(c.Source, out var source))
             query = query.Where(a => a.Sources.Any(s => s.ConnectorType == source));
+        if (!string.IsNullOrWhiteSpace(c.Ip))
+            query = query.Where(a => a.IpAddresses.Any(i => i.IpAddress == c.Ip.Trim()));
+        if (!string.IsNullOrWhiteSpace(c.Mac))
+        {
+            var mac = c.Mac.Trim().ToLowerInvariant();
+            query = query.Where(a => a.IpAddresses.Any(i => i.MacAddress == mac));
+        }
+        if (!string.IsNullOrWhiteSpace(c.Os))
+            query = query.Where(a => EF.Functions.ILike(a.OperatingSystem ?? "", $"%{c.Os.Trim()}%"));
+        if (!string.IsNullOrWhiteSpace(c.Software))
+            query = query.Where(a => a.Software.Any(s => EF.Functions.ILike(s.Name, $"%{c.Software.Trim()}%")));
+        if (!string.IsNullOrWhiteSpace(c.CloudProvider))
+            query = query.Where(a => a.CloudProvider == c.CloudProvider);
+        if (c.MaxDataQualityScore is { } maxDq)
+            query = query.Where(a => a.DataQualityScore <= maxDq);
         if (!string.IsNullOrWhiteSpace(c.TagKey))
         {
             query = string.IsNullOrWhiteSpace(c.TagValue)
@@ -175,8 +206,12 @@ public class UnitOfWork : IUnitOfWork
         _db = db;
         Assets = new AssetRepository(db);
         AssetSources = new GenericRepository<AssetSource>(db);
+        AssetIps = new GenericRepository<AssetIp>(db);
         AssetHistories = new GenericRepository<AssetHistory>(db);
         AssetCompliance = new GenericRepository<AssetCompliance>(db);
+        Relationships = new GenericRepository<AssetRelationship>(db);
+        CompliancePolicies = new GenericRepository<CompliancePolicy>(db);
+        Approvals = new GenericRepository<ApprovalRequest>(db);
         MatchingRules = new GenericRepository<MatchingRule>(db);
         MatchRecords = new GenericRepository<MatchRecord>(db);
         SourcePriorities = new GenericRepository<SourcePriority>(db);
@@ -198,8 +233,12 @@ public class UnitOfWork : IUnitOfWork
 
     public IAssetRepository Assets { get; }
     public IRepository<AssetSource> AssetSources { get; }
+    public IRepository<AssetIp> AssetIps { get; }
     public IRepository<AssetHistory> AssetHistories { get; }
     public IRepository<AssetCompliance> AssetCompliance { get; }
+    public IRepository<AssetRelationship> Relationships { get; }
+    public IRepository<CompliancePolicy> CompliancePolicies { get; }
+    public IRepository<ApprovalRequest> Approvals { get; }
     public IRepository<MatchingRule> MatchingRules { get; }
     public IRepository<MatchRecord> MatchRecords { get; }
     public IRepository<SourcePriority> SourcePriorities { get; }

@@ -15,6 +15,7 @@ public class ComplianceEngineTests
     private readonly Mock<IUnitOfWork> _uow = new();
     private readonly Mock<IAssetRepository> _assets = new();
     private readonly Mock<IRepository<Setting>> _settings = new();
+    private readonly Mock<IPolicyEngine> _policies = new();
     private readonly Mock<IEventBus> _events = new();
     private readonly ComplianceEngine _sut;
 
@@ -25,7 +26,14 @@ public class ComplianceEngineTests
         _settings.Setup(s => s.FirstOrDefaultAsync(It.IsAny<Expression<Func<Setting, bool>>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((Setting?)null);
-        _sut = new ComplianceEngine(_uow.Object, _events.Object, NullLogger<ComplianceEngine>.Instance);
+        // Default-baseline plan: every control required, SIEM/EDR/VS mandatory.
+        _policies.Setup(p => p.GetPlanAsync(It.IsAny<Asset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PolicyEvaluationPlan(null, "Default baseline",
+                Enum.GetValues<ControlType>(),
+                new HashSet<ControlType>
+                    { ControlType.SiemLogSource, ControlType.Edr, ControlType.VulnerabilityScanner }));
+        _sut = new ComplianceEngine(_uow.Object, _policies.Object, _events.Object,
+            NullLogger<ComplianceEngine>.Instance);
     }
 
     [Fact]

@@ -24,6 +24,8 @@ public class AssetDto
     public string? CloudRegion { get; set; }
     public decimal ComplianceScore { get; set; }
     public string ComplianceStatus { get; set; } = string.Empty;
+    public int HealthScore { get; set; }
+    public decimal DataQualityScore { get; set; }
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public string? PrimaryIp { get; set; }
@@ -51,6 +53,8 @@ public class AssetDto
         CloudRegion = a.CloudRegion,
         ComplianceScore = a.ComplianceScore,
         ComplianceStatus = a.ComplianceStatus.ToString(),
+        HealthScore = a.HealthScore,
+        DataQualityScore = a.DataQualityScore,
         FirstSeen = a.FirstSeen,
         LastSeen = a.LastSeen,
         PrimaryIp = a.IpAddresses.FirstOrDefault(i => i.IsPrimary)?.IpAddress
@@ -74,6 +78,7 @@ public class AssetDetailDto : AssetDto
     public List<AssetComplianceDto> Compliance { get; set; } = new();
     public List<AssetSoftwareDto> Software { get; set; } = new();
     public AssetRiskDto? Risk { get; set; }
+    public string DataQualityIssuesJson { get; set; } = "[]";
 
     public static AssetDetailDto FromDetailed(Asset a)
     {
@@ -100,6 +105,7 @@ public class AssetDetailDto : AssetDto
             s.Source.ToString(), s.LastSeen)).ToList();
         dto.Risk = a.Risk is null ? null : new AssetRiskDto(a.Risk.RiskScore, a.Risk.VulnerabilitiesCritical,
             a.Risk.VulnerabilitiesHigh, a.Risk.VulnerabilitiesMedium, a.Risk.VulnerabilitiesLow, a.Risk.LastCalculatedAt);
+        dto.DataQualityIssuesJson = a.DataQualityIssuesJson;
         return dto;
     }
 }

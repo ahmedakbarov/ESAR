@@ -75,6 +75,12 @@ public class AssetCompliance : BaseEntity
     public string? Details { get; set; }
     public ConnectorType? EvidenceSource { get; set; }
     public DateTime CheckedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>Remediation workflow state; managed by operators, preserved across evaluations.</summary>
+    public RemediationState RemediationState { get; set; } = RemediationState.None;
+    public string? RemediationNotes { get; set; }
+    public string? RemediationAssignee { get; set; }
+    /// <summary>Policy that required this control (null = platform default baseline).</summary>
+    public Guid? PolicyId { get; set; }
 }
 
 public class AssetEvent : BaseEntity

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Esar.Application.Abstractions;
+using Esar.Application.Approvals;
 using Esar.Application.Contracts;
 using Esar.Application.Matching;
 using Esar.Application.Merging;
@@ -24,16 +25,18 @@ public class AssetIngestionService : IAssetIngestionService
     private readonly INormalizationService _normalization;
     private readonly IMatchingEngine _matching;
     private readonly IMergeEngine _merge;
+    private readonly IApprovalService _approvals;
     private readonly IEventBus _events;
     private readonly ILogger<AssetIngestionService> _logger;
 
     public AssetIngestionService(IUnitOfWork uow, INormalizationService normalization, IMatchingEngine matching,
-        IMergeEngine merge, IEventBus events, ILogger<AssetIngestionService> logger)
+        IMergeEngine merge, IApprovalService approvals, IEventBus events, ILogger<AssetIngestionService> logger)
     {
         _uow = uow;
         _normalization = normalization;
         _matching = matching;
         _merge = merge;
+        _approvals = approvals;
         _events = events;
         _logger = logger;
     }
@@ -93,14 +96,28 @@ public class AssetIngestionService : IAssetIngestionService
                 return IngestionOutcome.QueuedForReview;
 
             default:
-                var created = await CreateNewAsync(normalized, ct);
+                var requiresApproval = await RequiresApprovalAsync(ct);
+                var created = await CreateNewAsync(normalized, requiresApproval, ct);
                 record.CreatedAssetId = created.Id;
                 await _uow.MatchRecords.AddAsync(record, ct);
                 await _uow.SaveChangesAsync(ct);
+                if (requiresApproval)
+                {
+                    // Asset stays in LifecycleStatus.Planned until an owner approves it.
+                    await _approvals.CreateAsync(ApprovalType.NewAsset, created.Id, new AssetApprovalPayload(),
+                        $"connector:{normalized.Source}", "Newly discovered asset pending owner validation", ct);
+                }
                 await _events.PublishAsync(EventTopics.AssetCreated,
                     new { AssetId = created.Id, Source = normalized.Source.ToString() }, ct);
                 return IngestionOutcome.Created;
         }
+    }
+
+    private async Task<bool> RequiresApprovalAsync(CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(
+            s => s.Key == SettingKeys.ApprovalRequireForNewAssets, ct);
+        return setting is not null && bool.TryParse(setting.Value, out var required) && required;
     }
 
     private async Task UpdateExistingAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
@@ -110,7 +127,7 @@ public class AssetIngestionService : IAssetIngestionService
         _uow.Assets.Update(asset);
     }
 
-    private async Task<Asset> CreateNewAsync(DiscoveredAsset d, CancellationToken ct)
+    private async Task<Asset> CreateNewAsync(DiscoveredAsset d, bool requiresApproval, CancellationToken ct)
     {
         var asset = new Asset
         {
@@ -119,6 +136,7 @@ public class AssetIngestionService : IAssetIngestionService
             FirstSeen = d.SeenAt,
             LastSeen = d.SeenAt,
             Status = AssetStatus.Active,
+            LifecycleStatus = requiresApproval ? LifecycleStatus.Planned : LifecycleStatus.Active,
             CreatedBy = $"connector:{d.Source}"
         };
         await _merge.ApplyAsync(asset, d, ct);

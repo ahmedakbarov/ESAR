@@ -172,12 +172,14 @@ public class DeleteAssetHandler : IRequestHandler<DeleteAssetCommand, bool>
     private readonly IUnitOfWork _uow;
     private readonly IAuditService _audit;
     private readonly ICurrentUserService _user;
+    private readonly IEventBus _events;
 
-    public DeleteAssetHandler(IUnitOfWork uow, IAuditService audit, ICurrentUserService user)
+    public DeleteAssetHandler(IUnitOfWork uow, IAuditService audit, ICurrentUserService user, IEventBus events)
     {
         _uow = uow;
         _audit = audit;
         _user = user;
+        _events = events;
     }
 
     public async Task<bool> Handle(DeleteAssetCommand request, CancellationToken ct)
@@ -192,6 +194,8 @@ public class DeleteAssetHandler : IRequestHandler<DeleteAssetCommand, bool>
         _uow.Assets.Update(asset);
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.AssetDeleted, nameof(Asset), asset.Id.ToString(), null, ct);
+        await _events.PublishAsync(EventTopics.AssetDeleted,
+            new { AssetId = asset.Id, asset.Hostname, DeletedBy = _user.UserName }, ct);
         return true;
     }
 }

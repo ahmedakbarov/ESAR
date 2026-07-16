@@ -222,4 +222,5 @@ public static class SettingKeys
     public const string StaleAssetDays = "lifecycle.staleAssetDays";
     public const string DecommissionAfterDays = "lifecycle.decommissionAfterDays";
     public const string ComplianceEvidenceMaxAgeDays = "compliance.evidenceMaxAgeDays";
+    public const string ApprovalRequireForNewAssets = "approval.requireForNewAssets";
 }

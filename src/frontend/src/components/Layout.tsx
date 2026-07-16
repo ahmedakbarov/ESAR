@@ -21,9 +21,12 @@ export default function Layout() {
           <NavLink to="/compliance">Compliance</NavLink>
           <div className="section">Operations</div>
           <NavLink to="/matching">Matching</NavLink>
+          <NavLink to="/approvals">Approvals</NavLink>
           <NavLink to="/connectors">Connectors</NavLink>
           <NavLink to="/incidents">Incidents</NavLink>
           <NavLink to="/reports">Reports</NavLink>
+          <div className="section">Governance</div>
+          <NavLink to="/policies">Policies</NavLink>
           <div className="section">Administration</div>
           <NavLink to="/audit">Audit Logs</NavLink>
           <NavLink to="/users">Users &amp; Roles</NavLink>

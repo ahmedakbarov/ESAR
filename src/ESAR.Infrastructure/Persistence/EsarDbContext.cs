@@ -33,6 +33,9 @@ public class EsarDbContext : DbContext
     public DbSet<Incident> Incidents => Set<Incident>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<Setting> Settings => Set<Setting>();
+    public DbSet<AssetRelationship> AssetRelationships => Set<AssetRelationship>();
+    public DbSet<CompliancePolicy> CompliancePolicies => Set<CompliancePolicy>();
+    public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -50,7 +53,9 @@ public class EsarDbContext : DbContext
             e.Property(x => x.Hostname).HasMaxLength(255).IsRequired();
             e.Property(x => x.NormalizedHostname).HasMaxLength(255);
             e.Property(x => x.ComplianceScore).HasPrecision(5, 2);
+            e.Property(x => x.DataQualityScore).HasPrecision(5, 2);
             e.Property(x => x.AttributeSourcesJson).HasColumnType("jsonb");
+            e.Property(x => x.DataQualityIssuesJson).HasColumnType("jsonb");
             e.HasQueryFilter(x => !x.IsDeleted);
             e.HasMany(x => x.Sources).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.IpAddresses).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
@@ -247,6 +252,36 @@ public class EsarDbContext : DbContext
             e.ToTable("settings");
             e.HasIndex(x => x.Key).IsUnique();
             e.Property(x => x.Key).HasMaxLength(256).IsRequired();
+        });
+
+        b.Entity<AssetRelationship>(e =>
+        {
+            e.ToTable("asset_relationships");
+            e.HasIndex(x => new { x.SourceAssetId, x.TargetAssetId, x.Type }).IsUnique();
+            e.HasIndex(x => x.TargetAssetId);
+            e.HasOne(x => x.SourceAsset).WithMany().HasForeignKey(x => x.SourceAssetId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.TargetAsset).WithMany().HasForeignKey(x => x.TargetAssetId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CompliancePolicy>(e =>
+        {
+            e.ToTable("compliance_policies");
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AppliesToAssetTypesJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToEnvironmentsJson).HasColumnType("jsonb");
+            e.Property(x => x.RequiredControlsJson).HasColumnType("jsonb");
+            e.Property(x => x.MandatoryControlsJson).HasColumnType("jsonb");
+        });
+
+        b.Entity<ApprovalRequest>(e =>
+        {
+            e.ToTable("approval_requests");
+            e.HasIndex(x => new { x.Status, x.CreatedAt });
+            e.Property(x => x.PayloadJson).HasColumnType("jsonb");
+            e.HasOne(x => x.Asset).WithMany().HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.SetNull);
         });
 
         // Store all enums as strings for readability and safe reordering.

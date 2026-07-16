@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import client from '../api/client';
-import { Badge, Panel, formatDate } from '../components/Ui';
+import { Badge, Panel, StatCard, formatDate } from '../components/Ui';
 
 export default function AssetDetail() {
   const { id } = useParams();
   const [asset, setAsset] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [relationships, setRelationships] = useState<any[]>([]);
+  const [impact, setImpact] = useState<any>(null);
 
   useEffect(() => {
     client.get(`/assets/${id}`).then((r) => setAsset(r.data));
     client.get(`/assets/${id}/history`).then((r) => setHistory(r.data));
+    client.get(`/relationships/asset/${id}`).then((r) => setRelationships(r.data));
+    setImpact(null);
   }, [id]);
 
+  const analyzeImpact = () =>
+    client.get(`/relationships/asset/${id}/impact?depth=3`).then((r) => setImpact(r.data));
+
   if (!asset) return <div className="muted">Loading…</div>;
+
+  const scoreTone = (v: number) => (v >= 80 ? 'good' : v >= 50 ? 'warn' : 'bad');
 
   return (
     <>
@@ -26,6 +35,18 @@ export default function AssetDetail() {
         >
           Re-evaluate compliance
         </button>
+      </div>
+
+      <div className="grid cols-4" style={{ marginBottom: 16 }}>
+        <StatCard label="Compliance" value={`${asset.complianceScore}%`}
+          tone={scoreTone(asset.complianceScore)} hint={asset.complianceStatus} />
+        <StatCard label="Health" value={asset.healthScore ?? '—'}
+          tone={scoreTone(asset.healthScore ?? 0)} />
+        <StatCard label="Data Quality" value={`${asset.dataQualityScore ?? '—'}`}
+          tone={scoreTone(asset.dataQualityScore ?? 0)} />
+        <StatCard label="Risk" value={asset.risk?.riskScore ?? '—'}
+          tone={asset.risk && asset.risk.riskScore >= 60 ? 'bad' : asset.risk && asset.risk.riskScore >= 35 ? 'warn' : 'good'}
+          hint={asset.risk ? `${asset.risk.critical} crit / ${asset.risk.high} high vulns` : 'not calculated yet'} />
       </div>
 
       <div className="grid cols-2">
@@ -122,6 +143,54 @@ export default function AssetDetail() {
           </div>
         </>
       )}
+
+      <h2 className="section-title">Relationships &amp; Impact</h2>
+      <div className="grid cols-2">
+        <Panel title="Relationships">
+          <table className="data">
+            <thead><tr><th>Source</th><th>Type</th><th>Target</th><th>Origin</th></tr></thead>
+            <tbody>
+              {relationships.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.sourceAssetId === id ? asset.hostname
+                    : <Link to={`/assets/${r.sourceAssetId}`}>{r.sourceHostname ?? 'asset'}</Link>}</td>
+                  <td><Badge value={r.type} /></td>
+                  <td>{r.targetAssetId === id ? asset.hostname
+                    : <Link to={`/assets/${r.targetAssetId}`}>{r.targetHostname ?? 'asset'}</Link>}</td>
+                  <td className="muted">{r.source}</td>
+                </tr>
+              ))}
+              {relationships.length === 0 &&
+                <tr><td colSpan={4} className="muted">No relationships recorded.</td></tr>}
+            </tbody>
+          </table>
+        </Panel>
+        <Panel title="Impact Analysis"
+          actions={<button className="secondary" onClick={analyzeImpact}>Analyze</button>}>
+          {!impact && <div className="muted">Run the analysis to see the blast radius and dependencies.</div>}
+          {impact && (
+            <>
+              <h3 style={{ marginTop: 8 }}>Impacted if this asset fails ({impact.impactedAssets.length})</h3>
+              {impact.impactedAssets.map((n: any) => (
+                <div key={n.assetId} style={{ marginBottom: 4 }}>
+                  <Link to={`/assets/${n.assetId}`}>{n.hostname}</Link>{' '}
+                  <Badge value={n.criticality} />{' '}
+                  <span className="muted" style={{ fontSize: 11 }}>{n.relationshipPath}</span>
+                </div>
+              ))}
+              {impact.impactedAssets.length === 0 && <div className="muted">None.</div>}
+              <h3 style={{ marginTop: 12 }}>Depends on ({impact.dependencies.length})</h3>
+              {impact.dependencies.map((n: any) => (
+                <div key={n.assetId} style={{ marginBottom: 4 }}>
+                  <Link to={`/assets/${n.assetId}`}>{n.hostname}</Link>{' '}
+                  <span className="muted" style={{ fontSize: 11 }}>{n.relationshipPath}</span>
+                </div>
+              ))}
+              {impact.dependencies.length === 0 && <div className="muted">None.</div>}
+            </>
+          )}
+        </Panel>
+      </div>
 
       <h2 className="section-title">Change History</h2>
       <div className="card">
