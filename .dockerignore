@@ -5,5 +5,4 @@
 **/.vs/
 **/logs/
 .git/
-deploy/
 docs/

@@ -11,3 +11,4 @@ TestResults/
 .env
 .env.local
 appsettings.Local.json
+esar-azure-deployment.json
