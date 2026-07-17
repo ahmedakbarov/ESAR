@@ -109,16 +109,22 @@ public class ConnectorRunner : IConnectorRunner
         {
             await _uow.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains(
+                   "ux_connector_jobs_one_running", StringComparison.Ordinal) == true)
         {
-            // The partial unique index is the final cross-process guard. Return the
-            // existing job instead of starting a second ingestion of the same connector.
-            var running = await _uow.ConnectorJobs.FirstOrDefaultAsync(
-                j => j.ConnectorId == connectorId && j.Status == JobStatus.Running, ct);
-            if (running is null) throw;
-            _logger.LogInformation("Connector {ConnectorId} already has running job {JobId}; skipping duplicate trigger",
-                connectorId, running.Id);
-            return running;
+            // The database is the final cross-process guard. A duplicate message is
+            // expected operationally: acknowledge it without retrying or ingesting.
+            _logger.LogInformation("Connector {ConnectorId} already has a running job; duplicate trigger skipped",
+                connectorId);
+            return new ConnectorJob
+            {
+                ConnectorId = connectorId,
+                Status = JobStatus.Cancelled,
+                StartedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                TriggeredBy = triggeredBy,
+                ErrorMessage = "Duplicate trigger skipped because a connector sync is already running."
+            };
         }
 
         var logLines = new List<string> { $"{DateTime.UtcNow:O} job started ({job.SyncMode})" };
