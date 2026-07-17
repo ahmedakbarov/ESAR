@@ -29,7 +29,13 @@ public class GenericRepository<T> : IRepository<T> where T : class
     public async Task AddAsync(T entity, CancellationToken ct = default) => await Db.Set<T>().AddAsync(entity, ct);
     public async Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default)
         => await Db.Set<T>().AddRangeAsync(entities, ct);
-    public void Update(T entity) => Db.Set<T>().Update(entity);
+    /// <summary>
+    /// Marks only the supplied aggregate/entity as modified. DbSet.Update traverses
+    /// its full navigation graph and wrongly treats new children with generated GUIDs
+    /// (for example discovered AssetIp/AssetTag/AssetRisk records) as existing rows.
+    /// Tracked navigation changes are still detected and inserted by SaveChanges.
+    /// </summary>
+    public void Update(T entity) => Db.Entry(entity).State = EntityState.Modified;
     public void Remove(T entity) => Db.Set<T>().Remove(entity);
 }
 
