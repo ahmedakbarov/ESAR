@@ -1,0 +1,25 @@
+# ---- build ----
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY Directory.Build.props ./
+COPY src/ESAR.Domain/ESAR.Domain.csproj src/ESAR.Domain/
+COPY src/ESAR.Application/ESAR.Application.csproj src/ESAR.Application/
+COPY src/ESAR.Infrastructure/ESAR.Infrastructure.csproj src/ESAR.Infrastructure/
+COPY src/ESAR.Api/ESAR.Api.csproj src/ESAR.Api/
+RUN dotnet restore src/ESAR.Api/ESAR.Api.csproj
+COPY src/ src/
+RUN dotnet publish src/ESAR.Api/ESAR.Api.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+# ---- runtime ----
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 10001 esar && useradd -u 10001 -g esar -s /usr/sbin/nologin esar \
+    && mkdir -p /data/reports /app/logs && chown -R esar:esar /data /app
+COPY --from=build /app/publish .
+USER esar
+ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD curl -fsS http://localhost:8080/health/live || exit 1
+ENTRYPOINT ["dotnet", "ESAR.Api.dll"]

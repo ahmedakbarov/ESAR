@@ -1,0 +1,7 @@
+apiVersion: v2
+name: esar
+description: Enterprise Security Asset Registry — single source of truth for cyber assets
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords: [asset-management, security, cmdb, inventory]

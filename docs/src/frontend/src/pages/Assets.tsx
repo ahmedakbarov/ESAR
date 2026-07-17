@@ -1,0 +1,89 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import client, { AssetDto, PagedResult } from '../api/client';
+import { Badge, formatDate } from '../components/Ui';
+
+const ASSET_TYPES = ['', 'WindowsServer', 'LinuxServer', 'VirtualMachine', 'PhysicalServer', 'Workstation',
+  'CloudInstance', 'Container', 'KubernetesNode', 'NetworkDevice', 'Firewall', 'LoadBalancer',
+  'Switch', 'Router', 'Database', 'Application', 'StorageSystem'];
+const ENVIRONMENTS = ['', 'Production', 'Staging', 'Test', 'Development', 'DisasterRecovery'];
+const COMPLIANCE = ['', 'Compliant', 'NonCompliant', 'Pending', 'Unknown'];
+
+export default function Assets() {
+  const [result, setResult] = useState<PagedResult<AssetDto> | null>(null);
+  const [search, setSearch] = useState('');
+  const [assetType, setAssetType] = useState('');
+  const [environment, setEnvironment] = useState('');
+  const [compliance, setCompliance] = useState('');
+  const [page, setPage] = useState(1);
+
+  const load = () => {
+    const params = new URLSearchParams({ page: String(page), pageSize: '25' });
+    if (search) params.set('search', search);
+    if (assetType) params.set('assetType', assetType);
+    if (environment) params.set('environment', environment);
+    if (compliance) params.set('complianceStatus', compliance);
+    client.get(`/assets?${params}`).then((r) => setResult(r.data));
+  };
+
+  useEffect(load, [page, assetType, environment, compliance]);
+
+  return (
+    <div className="card">
+      <div className="filters">
+        <input
+          placeholder="Search hostname, IP, owner, serial…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}
+          style={{ width: 280 }}
+        />
+        <select value={assetType} onChange={(e) => { setAssetType(e.target.value); setPage(1); }}>
+          {ASSET_TYPES.map((t) => <option key={t} value={t}>{t || 'All types'}</option>)}
+        </select>
+        <select value={environment} onChange={(e) => { setEnvironment(e.target.value); setPage(1); }}>
+          {ENVIRONMENTS.map((t) => <option key={t} value={t}>{t || 'All environments'}</option>)}
+        </select>
+        <select value={compliance} onChange={(e) => { setCompliance(e.target.value); setPage(1); }}>
+          {COMPLIANCE.map((t) => <option key={t} value={t}>{t || 'All compliance'}</option>)}
+        </select>
+        <button onClick={() => { setPage(1); load(); }}>Search</button>
+      </div>
+
+      <table className="data">
+        <thead>
+          <tr>
+            <th>Hostname</th><th>Type</th><th>OS</th><th>IP</th><th>Environment</th>
+            <th>Criticality</th><th>Compliance</th><th>Sources</th><th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {result?.items.map((a) => (
+            <tr key={a.id}>
+              <td><Link to={`/assets/${a.id}`}>{a.hostname}</Link></td>
+              <td>{a.assetType}</td>
+              <td>{a.operatingSystem ?? '—'}</td>
+              <td>{a.primaryIp ?? '—'}</td>
+              <td><Badge value={a.environment} /></td>
+              <td><Badge value={a.criticality} /></td>
+              <td><Badge value={a.complianceStatus} /> <span className="muted">{a.complianceScore}%</span></td>
+              <td className="muted">{a.sources.join(', ')}</td>
+              <td className="muted">{formatDate(a.lastSeen)}</td>
+            </tr>
+          ))}
+          {result && result.items.length === 0 && (
+            <tr><td colSpan={9} className="muted">No assets found.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {result && (
+        <div className="pagination">
+          <button className="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>
+          <span>Page {result.page} of {result.totalPages || 1} — {result.totalCount} assets</span>
+          <button className="secondary" disabled={page >= result.totalPages} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
+      )}
+    </div>
+  );
+}

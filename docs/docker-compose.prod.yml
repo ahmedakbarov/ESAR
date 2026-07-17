@@ -1,0 +1,53 @@
+services:
+  # Production edge. ESAR_DOMAIN must resolve to this VM and ports 80/443 must be reachable.
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      ESAR_DOMAIN: ${ESAR_DOMAIN:?Set ESAR_DOMAIN to a public DNS name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - esar-api
+      - esar-web
+
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []
+  esar-api:
+    ports: !reset []
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Cors__AllowedOrigins__0: https://${ESAR_DOMAIN}
+  esar-web:
+    ports: !reset []
+
+  postgres-backup:
+    build:
+      context: ./deploy/backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: esar
+      POSTGRES_USER: esar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: "7"
+      BACKUP_CRON: "0 2 * * *"
+    volumes:
+      - postgres-backups:/data/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-backups:

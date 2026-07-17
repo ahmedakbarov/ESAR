@@ -1,0 +1,121 @@
+# ESAR — Azure DevOps pipeline: build, test, containerize, deploy via Helm.
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  buildConfiguration: Release
+  dotnetVersion: 8.0.x
+  # Define in a variable group: containerRegistry, imageRepositoryPrefix, kubernetesServiceConnection
+
+stages:
+  - stage: Build
+    displayName: Build & Test
+    jobs:
+      - job: Backend
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: sdk
+              version: $(dotnetVersion)
+
+          - script: dotnet restore ESAR.sln
+            displayName: Restore
+
+          - script: dotnet build ESAR.sln -c $(buildConfiguration) --no-restore
+            displayName: Build
+
+          - script: dotnet test tests/ESAR.UnitTests/ESAR.UnitTests.csproj -c $(buildConfiguration) --no-build --logger trx --results-directory $(Agent.TempDirectory)
+            displayName: Unit tests
+
+          - script: dotnet test tests/ESAR.IntegrationTests/ESAR.IntegrationTests.csproj -c $(buildConfiguration) --no-build --logger trx --results-directory $(Agent.TempDirectory)
+            displayName: Integration tests
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: VSTest
+              testResultsFiles: "$(Agent.TempDirectory)/**/*.trx"
+
+      - job: Frontend
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "20.x"
+          - script: |
+              cd src/frontend
+              npm install
+              npm run build
+            displayName: Build portal
+
+  - stage: Package
+    displayName: Container images
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Docker
+        steps:
+          - task: Docker@2
+            displayName: Build & push API
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(containerRegistry)
+              repository: $(imageRepositoryPrefix)/esar-api
+              dockerfile: deploy/docker/Dockerfile.api
+              buildContext: .
+              tags: |
+                latest
+                $(Build.SourceVersion)
+
+          - task: Docker@2
+            displayName: Build & push Workers
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(containerRegistry)
+              repository: $(imageRepositoryPrefix)/esar-workers
+              dockerfile: deploy/docker/Dockerfile.workers
+              buildContext: .
+              tags: |
+                latest
+                $(Build.SourceVersion)
+
+          - task: Docker@2
+            displayName: Build & push Web
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(containerRegistry)
+              repository: $(imageRepositoryPrefix)/esar-web
+              dockerfile: deploy/docker/Dockerfile.frontend
+              buildContext: .
+              tags: |
+                latest
+                $(Build.SourceVersion)
+
+  - stage: Deploy
+    displayName: Deploy to Kubernetes
+    dependsOn: Package
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Helm
+        environment: esar-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: HelmDeploy@0
+                  displayName: helm upgrade
+                  inputs:
+                    connectionType: Kubernetes Service Connection
+                    kubernetesServiceConnection: $(kubernetesServiceConnection)
+                    namespace: esar
+                    command: upgrade
+                    chartType: FilePath
+                    chartPath: deploy/helm/esar
+                    releaseName: esar
+                    arguments: >-
+                      --install
+                      --set image.tag=$(Build.SourceVersion)
