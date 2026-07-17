@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Data;
 using System.Data.Common;
 using Esar.Application.Abstractions;
 using Esar.Application.Incidents;
