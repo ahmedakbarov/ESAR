@@ -1,11 +1,14 @@
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Esar.Application.Abstractions;
 using Esar.Application.Incidents;
 using Esar.Application.Ingestion;
 using Esar.Application.Notifications;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using Esar.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Esar.Infrastructure.Connectors;
@@ -26,11 +29,12 @@ public class ConnectorRunner : IConnectorRunner
     private readonly INotificationService _notifications;
     private readonly ISecretProtector _secrets;
     private readonly IEventBus _events;
+    private readonly EsarDbContext _db;
     private readonly ILogger<ConnectorRunner> _logger;
 
     public ConnectorRunner(IUnitOfWork uow, IConnectorFactory factory, IAssetIngestionService ingestion,
         IIncidentService incidents, INotificationService notifications, ISecretProtector secrets,
-        IEventBus events, ILogger<ConnectorRunner> logger)
+        IEventBus events, EsarDbContext db, ILogger<ConnectorRunner> logger)
     {
         _uow = uow;
         _factory = factory;
@@ -39,22 +43,50 @@ public class ConnectorRunner : IConnectorRunner
         _notifications = notifications;
         _secrets = secrets;
         _events = events;
+        _db = db;
         _logger = logger;
     }
 
     public async Task<ConnectorJob> RunAsync(Guid connectorId, SyncMode? modeOverride = null,
         string triggeredBy = "scheduler", CancellationToken ct = default)
     {
+        // The in-memory semaphore covers concurrent Hangfire workers in this process.
+        // PostgreSQL advisory locking also covers the API process and any future worker replicas.
+        var connection = _db.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere) await connection.OpenAsync(ct);
+        var databaseLockTaken = false;
+        var processLockTaken = false;
         var gate = ConnectorLocks.GetOrAdd(connectorId, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
         try
         {
+            await SetAdvisoryLockAsync(connection, connectorId, acquire: true, ct);
+            databaseLockTaken = true;
+            await gate.WaitAsync(ct);
+            processLockTaken = true;
             return await RunCoreAsync(connectorId, modeOverride, triggeredBy, ct);
         }
         finally
         {
-            gate.Release();
+            if (processLockTaken) gate.Release();
+            if (databaseLockTaken)
+                await SetAdvisoryLockAsync(connection, connectorId, acquire: false, CancellationToken.None);
+            if (openedHere) await connection.CloseAsync();
         }
+    }
+
+    private static async Task SetAdvisoryLockAsync(DbConnection connection, Guid connectorId, bool acquire,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = acquire
+            ? "SELECT pg_advisory_lock(hashtext(@key));"
+            : "SELECT pg_advisory_unlock(hashtext(@key));";
+        var key = command.CreateParameter();
+        key.ParameterName = "key";
+        key.Value = $"esar.connector.{connectorId:N}";
+        command.Parameters.Add(key);
+        await command.ExecuteScalarAsync(ct);
     }
 
     private async Task<ConnectorJob> RunCoreAsync(Guid connectorId, SyncMode? modeOverride,
