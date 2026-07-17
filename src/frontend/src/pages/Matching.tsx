@@ -18,7 +18,6 @@ export default function Matching() {
 
   const decide = async (id: string, action: 'approve' | 'reject') => {
     await client.post(`/matching/review-queue/${id}/${action}`, {});
-    window.dispatchEvent(new Event('esar:counts-changed'));
     load();
   };
 

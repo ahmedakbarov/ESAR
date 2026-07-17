@@ -36,7 +36,6 @@ export default function Connectors() {
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState<ConnectorForm | null>(null);
   const [error, setError] = useState('');
-  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = () => {
     client.get('/connectors').then((r) => setConnectors(r.data));
@@ -75,15 +74,6 @@ export default function Connectors() {
   const healthCheck = async (id: string) => {
     setBusy(id);
     try { await client.post(`/connectors/${id}/health-check`); } finally { setBusy(null); load(); }
-  };
-
-  const remove = async (connector: any) => {
-    if (!window.confirm(`Delete connector “${connector.name}”? This cannot be undone.`)) return;
-    setError('');
-    setDeleting(connector.id);
-    try { await client.delete(`/connectors/${connector.id}`); load(); }
-    catch (err: any) { setError(err.response?.data?.error ?? 'Delete failed'); }
-    finally { setDeleting(null); }
   };
 
   const toggleJobs = async (id: string) => {
@@ -138,7 +128,6 @@ export default function Connectors() {
           </div>
         </div>
       )}
-      {error && !form && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
 
       <table className="data">
         <thead>
@@ -177,10 +166,6 @@ export default function Connectors() {
                       .map(([k, v]) => `${k}=${v}`).join('\n'),
                   })}>
                     Edit
-                  </button>
-                  <button className="danger" disabled={busy === c.id || deleting === c.id}
-                    onClick={() => remove(c)} style={{ marginLeft: 6 }}>
-                    {deleting === c.id ? 'Deleting…' : 'Delete'}
                   </button>
                 </td>
               </tr>

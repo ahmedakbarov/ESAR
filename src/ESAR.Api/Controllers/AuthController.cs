@@ -1,5 +1,4 @@
 using Asp.Versioning;
-using Esar.Application.Abstractions;
 using Esar.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -34,19 +33,6 @@ public class AuthController : ControllerBase
             displayName = result.DisplayName,
             roles = result.Roles
         });
-    }
-
-    public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-
-    /// <summary>Self-service password change for the authenticated local user.</summary>
-    [HttpPost("change-password")]
-    [Authorize]
-    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request,
-        [FromServices] ICurrentUserService currentUser, CancellationToken ct)
-    {
-        if (currentUser.UserId is not { } userId) return Unauthorized();
-        var result = await _auth.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
-        return result.Success ? Ok(new { changed = true }) : BadRequest(new { error = result.Error });
     }
 
     /// <summary>Returns the current principal's identity, roles and permissions.</summary>

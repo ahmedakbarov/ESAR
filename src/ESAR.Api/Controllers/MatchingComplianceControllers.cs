@@ -36,13 +36,6 @@ public class MatchingController : ControllerBase
         _cache = cache;
     }
 
-    /// <summary>Lightweight pending-review count for navigation badges.</summary>
-    [HttpGet("review-queue/count")]
-    [Authorize("matching.read")]
-    public async Task<IActionResult> ReviewQueueCount(CancellationToken ct)
-        => Ok(new { count = await _uow.MatchRecords.CountAsync(
-            m => m.Decision == MatchDecision.QueuedForReview, ct) });
-
     /// <summary>Manual review queue: ambiguous soft matches awaiting a human decision.</summary>
     [HttpGet("review-queue")]
     [Authorize("matching.read")]

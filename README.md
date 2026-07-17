@@ -45,24 +45,6 @@ The API creates and seeds the schema on first start (`Database:AutoMigrate=true`
 For DBA-managed production installs run [db/001_schema.sql](db/001_schema.sql),
 [db/002_seed.sql](db/002_seed.sql) and [db/003_v2_features.sql](db/003_v2_features.sql) instead.
 
-## Production HTTPS and backups
-
-Set `ESAR_DOMAIN` to a public DNS name, point its A record to the VM public IP, and allow inbound TCP **80** and **443** in the Azure NSG. Set strong values for `POSTGRES_PASSWORD`, `RABBITMQ_PASSWORD`, `JWT_SIGNING_KEY`, `ENCRYPTION_KEY`, and `ADMIN_PASSWORD`; never commit them. Then run:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production up -d --build
-```
-
-Caddy obtains and renews Let's Encrypt certificates automatically. The production overlay removes public PostgreSQL, Redis, RabbitMQ, API and frontend ports; remove the prior public NSG rule for TCP **8090** after switching. Without a public domain, use the base Compose file for local/test HTTP only.
-
-The `postgres-backup` container creates a compressed UTC backup nightly at 02:00 and retains seven days in the `postgres-backups` named volume. Check failures with `docker compose logs postgres-backup`. Restore one backup without exposing the database port:
-
-```bash
-gunzip -c backup.sql.gz | docker compose exec -T postgres psql -U esar -d esar
-```
-
-Copy backups off the VM regularly, for example with `docker run --rm -v esar_postgres-backups:/data -v "$PWD":/out alpine cp -a /data/. /out/`. Test restores in a separate environment before relying on them for recovery.
-
 ## Repository layout
 
 ```

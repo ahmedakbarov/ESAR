@@ -67,15 +67,9 @@ public class ConnectorsController : ControllerBase
         if (!Enum.TryParse<ConnectorType>(request.Type, true, out var type))
             return BadRequest(new { error = $"Unknown connector type '{request.Type}'." });
 
-        var name = request.Name.Trim();
-        var duplicate = await _uow.Connectors.FirstOrDefaultAsync(
-            c => c.Name.ToLower() == name.ToLower(), ct);
-        if (duplicate is not null)
-            return Conflict(new { error = "A connector with this name already exists." });
-
         var connector = new ConnectorConfig
         {
-            Name = name,
+            Name = request.Name.Trim(),
             Type = type,
             Enabled = request.Enabled,
             CronSchedule = request.CronSchedule,
@@ -87,15 +81,7 @@ public class ConnectorsController : ControllerBase
             RateLimitPerMinute = request.RateLimitPerMinute
         };
         await _uow.Connectors.AddAsync(connector, ct);
-        try
-        {
-            await _uow.SaveChangesAsync(ct);
-        }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateException)
-        {
-            // Unique-constraint race: another request created the same name concurrently.
-            return Conflict(new { error = "A connector with this name already exists." });
-        }
+        await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(ConnectorConfig),
             connector.Id.ToString(), new { action = "created", connector.Name }, ct);
         return CreatedAtAction(nameof(Get), new { id = connector.Id, version = "1" }, ToDto(connector));
@@ -108,13 +94,7 @@ public class ConnectorsController : ControllerBase
         var connector = await _uow.Connectors.GetByIdAsync(id, ct);
         if (connector is null) return NotFound();
 
-        var newName = request.Name.Trim();
-        var clash = await _uow.Connectors.FirstOrDefaultAsync(
-            c => c.Id != id && c.Name.ToLower() == newName.ToLower(), ct);
-        if (clash is not null)
-            return Conflict(new { error = "A connector with this name already exists." });
-
-        connector.Name = newName;
+        connector.Name = request.Name.Trim();
         connector.Enabled = request.Enabled;
         connector.CronSchedule = request.CronSchedule;
         connector.Priority = request.Priority;
@@ -127,14 +107,7 @@ public class ConnectorsController : ControllerBase
             connector.SettingsJson = MergeSettings(connector.SettingsJson, request.Settings);
         connector.UpdatedAt = DateTime.UtcNow;
         _uow.Connectors.Update(connector);
-        try
-        {
-            await _uow.SaveChangesAsync(ct);
-        }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateException)
-        {
-            return Conflict(new { error = "A connector with this name already exists." });
-        }
+        await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(ConnectorConfig),
             connector.Id.ToString(), new { action = "updated" }, ct);
         return Ok(ToDto(connector));

@@ -74,32 +74,6 @@ public class UsersController : ControllerBase
         return Ok(new { user.Id, user.Username });
     }
 
-    public record ResetPasswordRequest(string NewPassword);
-
-    /// <summary>Admin-only reset of another local user's password.</summary>
-    [HttpPost("{id:guid}/reset-password")]
-    [Authorize("users.manage")]
-    public async Task<IActionResult> ResetPassword(Guid id, [FromBody] ResetPasswordRequest request,
-        CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(request.NewPassword) || request.NewPassword.Length < 12)
-            return BadRequest(new { error = "Password must be at least 12 characters." });
-        var user = await _uow.Users.GetByIdAsync(id, ct);
-        if (user is null) return NotFound();
-        if (user.AuthProvider != AuthProvider.Local)
-            return BadRequest(new { error = "Password is managed by the external identity provider." });
-
-        user.PasswordHash = _hasher.Hash(request.NewPassword);
-        user.FailedLoginAttempts = 0;
-        user.LockedOutUntil = null;
-        user.UpdatedAt = DateTime.UtcNow;
-        _uow.Users.Update(user);
-        await _uow.SaveChangesAsync(ct);
-        await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(),
-            new { action = "password-reset" }, ct);
-        return Ok(new { reset = true });
-    }
-
     public record UpdateUserRequest(string? DisplayName, bool? IsActive, List<string>? Roles, string? NewPassword);
 
     [HttpPut("{id:guid}")]

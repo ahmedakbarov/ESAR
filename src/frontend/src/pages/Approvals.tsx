@@ -14,7 +14,6 @@ export default function Approvals() {
     setBusy(id);
     try {
       await client.post(`/approvals/${id}/${action}`, {});
-      window.dispatchEvent(new Event('esar:counts-changed'));
     } finally {
       setBusy(null);
       load();

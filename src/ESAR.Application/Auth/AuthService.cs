@@ -10,18 +10,13 @@ public interface IAuthService
 {
     Task<LoginResult> LoginAsync(string username, string password, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetPermissionsAsync(Guid userId, CancellationToken ct = default);
-    Task<PasswordChangeResult> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword,
-        CancellationToken ct = default);
 }
 
 public record LoginResult(bool Success, string? Token, DateTime? ExpiresAt, string? Error,
     string? DisplayName = null, IReadOnlyList<string>? Roles = null);
 
-public record PasswordChangeResult(bool Success, string? Error);
-
 public class AuthService : IAuthService
 {
-    public const int MinPasswordLength = 12;
     private const int MaxFailedAttempts = 5;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
 
@@ -77,33 +72,6 @@ public class AuthService : IAuthService
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.Login, nameof(User), user.Id.ToString(), new { user.Username }, ct);
         return new LoginResult(true, token, expires, null, user.DisplayName, roles);
-    }
-
-    public async Task<PasswordChangeResult> ChangePasswordAsync(Guid userId, string currentPassword,
-        string newPassword, CancellationToken ct = default)
-    {
-        if (string.IsNullOrEmpty(newPassword) || newPassword.Length < MinPasswordLength)
-            return new PasswordChangeResult(false,
-                $"New password must be at least {MinPasswordLength} characters.");
-
-        var user = await _uow.Users.GetByIdAsync(userId, ct);
-        if (user is null || !user.IsActive)
-            return new PasswordChangeResult(false, "User not found.");
-        if (user.AuthProvider != AuthProvider.Local || user.PasswordHash is null)
-            return new PasswordChangeResult(false, "Password is managed by the external identity provider.");
-        if (!_hasher.Verify(currentPassword ?? string.Empty, user.PasswordHash))
-            return new PasswordChangeResult(false, "Current password is incorrect.");
-
-        user.PasswordHash = _hasher.Hash(newPassword);
-        user.FailedLoginAttempts = 0;
-        user.LockedOutUntil = null;
-        user.UpdatedAt = DateTime.UtcNow;
-        _uow.Users.Update(user);
-        await _uow.SaveChangesAsync(ct);
-        await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(),
-            new { action = "password-changed" }, ct);
-        _logger.LogInformation("User {User} changed their password", user.Username);
-        return new PasswordChangeResult(true, null);
     }
 
     public async Task<IReadOnlyList<string>> GetPermissionsAsync(Guid userId, CancellationToken ct = default)

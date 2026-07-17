@@ -163,17 +163,6 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 // ---------- Pipeline ----------
-// Caddy terminates TLS on the internal Docker network — honor its forwarded headers
-// so scheme/client-IP are correct for HSTS, redirects, rate limiting and audit logs.
-var forwardedOptions = new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
-{
-    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
-                       Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
-};
-forwardedOptions.KnownNetworks.Clear();
-forwardedOptions.KnownProxies.Clear();
-app.UseForwardedHeaders(forwardedOptions);
-
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (!app.Environment.IsDevelopment())

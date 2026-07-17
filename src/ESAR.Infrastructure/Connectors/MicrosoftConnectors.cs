@@ -217,44 +217,10 @@ public class MicrosoftDefenderConnector : AadConnectorBase
     }
 }
 
-/// <summary>
-/// Discovers Azure resources via Azure Resource Graph: VMs enriched with NIC data
-/// (private IPs, MACs, public-IP presence), tags mapped to ESAR fields, plus Arc machines.
-/// Optional setting: subscriptionIds — comma-separated list or JSON array.
-/// </summary>
+/// <summary>Discovers Azure resources (VMs and network devices) via Azure Resource Graph.</summary>
 public class AzureConnector : AadConnectorBase
 {
     private const string ArmScope = "https://management.azure.com/.default";
-
-    private const string VmQuery = @"Resources
-        | where type =~ 'microsoft.compute/virtualmachines'
-        | extend osType = tostring(properties.storageProfile.osDisk.osType),
-                 vmId = tostring(properties.vmId),
-                 computerName = tostring(properties.osProfile.computerName)
-        | project id, name, computerName, osType, vmId, location, subscriptionId, resourceGroup, tags";
-
-    private const string ArcQuery = @"Resources
-        | where type =~ 'microsoft.hybridcompute/machines'
-        | extend osType = tostring(properties.osName),
-                 computerName = tostring(properties.machineFqdn)
-        | project id, name, computerName, osType, location, subscriptionId, resourceGroup, tags";
-
-    private const string NicQuery = @"Resources
-        | where type =~ 'microsoft.network/networkinterfaces'
-        | extend vmResourceId = tolower(tostring(properties.virtualMachine.id)),
-                 macAddress = tostring(properties.macAddress)
-        | where isnotempty(vmResourceId)
-        | mv-expand ipconfig = properties.ipConfigurations
-        | extend privateIp = tostring(ipconfig.properties.privateIPAddress),
-                 publicIpId = tolower(tostring(ipconfig.properties.publicIPAddress.id))
-        | join kind=leftouter (
-            Resources
-            | where type =~ 'microsoft.network/publicipaddresses'
-            | extend publicIpId = tolower(id), publicIp = tostring(properties.ipAddress)
-            | project publicIpId, publicIp
-        ) on publicIpId
-        | project vmResourceId, macAddress, privateIp, publicIp";
-
     public AzureConnector(IHttpClientFactory httpFactory, ILogger<AzureConnector> logger)
         : base(httpFactory, logger) { }
 
@@ -277,53 +243,23 @@ public class AzureConnector : AadConnectorBase
         SyncContext context, [EnumeratorCancellation] CancellationToken ct = default)
     {
         var token = await AcquireTokenAsync(settings, ArmScope, ct);
-        var subscriptions = AzureAssetMapper.ParseSubscriptionIds(settings.GetOptional("subscriptionIds"));
-
-        // 1. Virtual machines (aggregated by resource id, NIC rows applied afterwards).
-        var vms = new Dictionary<string, DiscoveredAsset>(StringComparer.OrdinalIgnoreCase);
-        await foreach (var row in QueryAsync(token, VmQuery, subscriptions, context, ct))
-        {
-            var asset = AzureAssetMapper.MapMachine(row, isCloudVm: true);
-            if (asset is not null) vms[asset.ExternalId.ToLowerInvariant()] = asset;
-        }
-
-        // 2. NIC enrichment is best-effort: partial RBAC on network resources must not block discovery.
-        try
-        {
-            await foreach (var nic in QueryAsync(token, NicQuery, subscriptions, context, ct))
-            {
-                var vmResourceId = AzureAssetMapper.GetString(nic, "vmResourceId");
-                if (vmResourceId is not null && vms.TryGetValue(vmResourceId, out var asset))
-                    AzureAssetMapper.ApplyNicRow(asset, nic);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Logger.LogWarning(ex, "Azure NIC enrichment failed — yielding VMs without IP/MAC data");
-        }
-
-        foreach (var asset in vms.Values) yield return asset;
-
-        // 3. Azure Arc machines (no NIC join available).
-        await foreach (var row in QueryAsync(token, ArcQuery, subscriptions, context, ct))
-        {
-            var arc = AzureAssetMapper.MapMachine(row, isCloudVm: false);
-            if (arc is not null) yield return arc;
-        }
-    }
-
-    private async IAsyncEnumerable<JsonElement> QueryAsync(string token, string query,
-        IReadOnlyList<string> subscriptions, SyncContext context, [EnumeratorCancellation] CancellationToken ct)
-    {
         var client = CreateClient();
+        const string query = @"Resources
+            | where type in~ ('microsoft.compute/virtualmachines','microsoft.hybridcompute/machines')
+            | extend os = tostring(properties.storageProfile.osDisk.osType),
+                     vmId = tostring(properties.vmId),
+                     computerName = tostring(properties.osProfile.computerName)
+            | project id, name, computerName, os, vmId, location, subscriptionId, tags, properties";
+
         string? skipToken = null;
         do
         {
             await RateLimitAsync(context, ct);
-            object options = new { resultFormat = "objectArray", skipToken };
-            var body = JsonSerializer.Serialize(subscriptions.Count > 0
-                ? new { query, options, subscriptions }
-                : (object)new { query, options });
+            var body = JsonSerializer.Serialize(new
+            {
+                query,
+                options = new { resultFormat = "objectArray", skipToken }
+            });
             using var response = await SendWithRetryAsync(client, () =>
             {
                 var request = new HttpRequestMessage(HttpMethod.Post,
@@ -337,153 +273,38 @@ public class AzureConnector : AadConnectorBase
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             skipToken = GetString(doc.RootElement, "$skipToken");
+
             if (doc.RootElement.TryGetProperty("data", out var data))
             {
-                foreach (var row in data.EnumerateArray())
-                    yield return row.Clone();
+                foreach (var resource in data.EnumerateArray())
+                {
+                    var resourceId = GetString(resource, "id") ?? string.Empty;
+                    var asset = new DiscoveredAsset
+                    {
+                        Source = ConnectorType.Azure,
+                        ExternalId = resourceId,
+                        Hostname = GetString(resource, "computerName") ?? GetString(resource, "name"),
+                        OperatingSystem = GetString(resource, "os"),
+                        AssetType = AssetType.CloudInstance,
+                        CloudProvider = "Azure",
+                        CloudResourceId = resourceId,
+                        CloudRegion = GetString(resource, "location"),
+                        CloudSubscriptionId = GetString(resource, "subscriptionId"),
+                        RawJson = resource.GetRawText()
+                    };
+                    asset.Identifiers[MatchAttributes.AzureResourceId] = resourceId;
+                    if (GetString(resource, "vmId") is { } vmId)
+                        asset.Identifiers[MatchAttributes.BiosUuid] = vmId;
+                    if (resource.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var tag in tags.EnumerateObject())
+                            asset.Tags[tag.Name] = tag.Value.ValueKind == JsonValueKind.String
+                                ? tag.Value.GetString() ?? string.Empty
+                                : tag.Value.GetRawText();
+                    }
+                    yield return asset;
+                }
             }
         } while (!string.IsNullOrEmpty(skipToken));
     }
-}
-
-/// <summary>Pure mapping/aggregation logic for Azure Resource Graph rows — unit-testable.</summary>
-public static class AzureAssetMapper
-{
-    /// <summary>Accepts a comma-separated list or a JSON array of subscription ids.</summary>
-    public static List<string> ParseSubscriptionIds(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return new List<string>();
-        var trimmed = raw.Trim();
-        if (trimmed.StartsWith('['))
-        {
-            try
-            {
-                return (JsonSerializer.Deserialize<List<string>>(trimmed) ?? new List<string>())
-                    .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-            }
-            catch (JsonException)
-            {
-                return new List<string>();
-            }
-        }
-        return trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-    }
-
-    public static DiscoveredAsset? MapMachine(JsonElement row, bool isCloudVm)
-    {
-        var resourceId = GetString(row, "id");
-        if (string.IsNullOrEmpty(resourceId)) return null;
-
-        var asset = new DiscoveredAsset
-        {
-            Source = ConnectorType.Azure,
-            ExternalId = resourceId,
-            Hostname = GetString(row, "computerName") ?? GetString(row, "name"),
-            OperatingSystem = GetString(row, "osType"),
-            AssetType = AssetType.CloudInstance,
-            CloudProvider = "Azure",
-            CloudResourceId = resourceId,
-            CloudRegion = GetString(row, "location"),
-            CloudSubscriptionId = GetString(row, "subscriptionId"),
-            RawJson = row.GetRawText()
-        };
-        asset.Identifiers[MatchAttributes.AzureResourceId] = resourceId;
-        if (isCloudVm && GetString(row, "vmId") is { } vmId && !string.IsNullOrEmpty(vmId))
-            asset.Identifiers[MatchAttributes.BiosUuid] = vmId;
-        if (GetString(row, "resourceGroup") is { } resourceGroup)
-            asset.Tags["azure_resource_group"] = resourceGroup;
-        if (row.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object)
-            ApplyTagMappings(asset, tags);
-        return asset;
-    }
-
-    /// <summary>Applies one NIC/ipconfig row: interface + exposure tags when a public IP exists.</summary>
-    public static void ApplyNicRow(DiscoveredAsset asset, JsonElement nicRow)
-    {
-        var privateIp = GetString(nicRow, "privateIp");
-        var mac = GetString(nicRow, "macAddress");
-        if (!string.IsNullOrEmpty(privateIp) || !string.IsNullOrEmpty(mac))
-        {
-            asset.Interfaces.Add(new DiscoveredInterface
-            {
-                IpAddress = privateIp,
-                MacAddress = mac,
-                IsPrimary = asset.Interfaces.Count == 0
-            });
-        }
-        if (!string.IsNullOrEmpty(GetString(nicRow, "publicIp")))
-        {
-            asset.Tags["public_ip"] = "true";
-            asset.Tags["internet_facing"] = "true"; // consumed by the risk scoring engine
-        }
-    }
-
-    /// <summary>Case-insensitive tag → ESAR field mapping; unmapped tags are preserved as-is.</summary>
-    public static void ApplyTagMappings(DiscoveredAsset asset, JsonElement tags)
-    {
-        foreach (var tag in tags.EnumerateObject())
-        {
-            var value = tag.Value.ValueKind == JsonValueKind.String
-                ? tag.Value.GetString() ?? string.Empty
-                : tag.Value.GetRawText();
-            switch (tag.Name.ToLowerInvariant())
-            {
-                case "environment" when ParseEnvironment(value) is { } environment:
-                    asset.Environment = environment;
-                    break;
-                case "criticality" when ParseCriticality(value) is { } criticality:
-                    asset.Criticality = criticality;
-                    break;
-                case "owner":
-                case "ownername":
-                    asset.OwnerName = value;
-                    break;
-                case "owneremail":
-                    asset.OwnerEmail = value;
-                    break;
-                case "businessunit":
-                    asset.BusinessUnit = value;
-                    break;
-                case "department":
-                    asset.Department = value;
-                    break;
-                case "classification":
-                    asset.Classification = value;
-                    break;
-                default:
-                    asset.Tags[tag.Name] = value;
-                    break;
-            }
-        }
-    }
-
-    private static EnvironmentType? ParseEnvironment(string value) => value.Trim().ToLowerInvariant() switch
-    {
-        "prod" or "production" => EnvironmentType.Production,
-        "staging" or "stage" => EnvironmentType.Staging,
-        "test" or "qa" or "uat" => EnvironmentType.Test,
-        "dev" or "development" => EnvironmentType.Development,
-        "dr" or "disasterrecovery" => EnvironmentType.DisasterRecovery,
-        _ => null
-    };
-
-    private static CriticalityLevel? ParseCriticality(string value) => value.Trim().ToLowerInvariant() switch
-    {
-        "critical" => CriticalityLevel.Critical,
-        "high" => CriticalityLevel.High,
-        "medium" or "med" => CriticalityLevel.Medium,
-        "low" => CriticalityLevel.Low,
-        _ => null
-    };
-
-    public static string? GetString(JsonElement element, string property)
-        => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value)
-            ? value.ValueKind switch
-            {
-                JsonValueKind.String => value.GetString(),
-                JsonValueKind.Number => value.GetRawText(),
-                _ => null
-            }
-            : null;
 }

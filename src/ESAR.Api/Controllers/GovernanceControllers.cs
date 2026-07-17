@@ -223,13 +223,6 @@ public class ApprovalsController : ControllerBase
         _user = user;
     }
 
-    /// <summary>Lightweight pending count for navigation badges.</summary>
-    [HttpGet("pending/count")]
-    [Authorize("assets.read")]
-    public async Task<IActionResult> PendingCount(CancellationToken ct)
-        => Ok(new { count = await _uow.Approvals.CountAsync(
-            a => a.Status == ApprovalStatus.Pending, ct) });
-
     [HttpGet("pending")]
     [Authorize("assets.read")]
     public async Task<IActionResult> Pending(CancellationToken ct)

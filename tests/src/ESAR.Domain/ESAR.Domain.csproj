@@ -1,5 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <RootNamespace>Esar.Domain</RootNamespace>
-  </PropertyGroup>
-</Project>
