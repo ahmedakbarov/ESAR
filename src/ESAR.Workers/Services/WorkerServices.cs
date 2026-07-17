@@ -48,12 +48,6 @@ public class JobSchedulerService : BackgroundService
             j => j.RecalculateAllAsync(CancellationToken.None), "15 */6 * * *");
         _recurringJobs.AddOrUpdate<AssetScoringJobs>("duplicate-ip-detection",
             j => j.DetectDuplicateIpsAsync(CancellationToken.None), "45 */12 * * *");
-        _recurringJobs.AddOrUpdate<MaintenanceJobs>("stale-connector-jobs",
-            j => j.CloseStaleConnectorJobsAsync(false, CancellationToken.None), "*/10 * * * *");
-
-        // A restarted worker cannot own any running job — unblock connectors immediately.
-        BackgroundJob.Enqueue<MaintenanceJobs>(
-            j => j.CloseStaleConnectorJobsAsync(true, CancellationToken.None));
 
         // Connector jobs follow DB configuration; refresh periodically so edits apply without restart.
         while (!stoppingToken.IsCancellationRequested)

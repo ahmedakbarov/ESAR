@@ -1,12 +1,10 @@
 using System.Text.Json;
-using System.Collections.Concurrent;
 using Esar.Application.Abstractions;
 using Esar.Application.Incidents;
 using Esar.Application.Ingestion;
 using Esar.Application.Notifications;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Esar.Infrastructure.Connectors;
@@ -17,9 +15,6 @@ namespace Esar.Infrastructure.Connectors;
 /// </summary>
 public class ConnectorRunner : IConnectorRunner
 {
-    // One VM runs a single worker process. This prevents duplicate manual/scheduled runs
-    // from concurrently updating the same golden records.
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> ConnectorLocks = new();
     private readonly IUnitOfWork _uow;
     private readonly IConnectorFactory _factory;
     private readonly IAssetIngestionService _ingestion;
@@ -46,53 +41,8 @@ public class ConnectorRunner : IConnectorRunner
     public async Task<ConnectorJob> RunAsync(Guid connectorId, SyncMode? modeOverride = null,
         string triggeredBy = "scheduler", CancellationToken ct = default)
     {
-        var processLockTaken = false;
-        var gate = ConnectorLocks.GetOrAdd(connectorId, _ => new SemaphoreSlim(1, 1));
-        try
-        {
-            await gate.WaitAsync(ct);
-            processLockTaken = true;
-            return await RunCoreAsync(connectorId, modeOverride, triggeredBy, ct);
-        }
-        finally
-        {
-            if (processLockTaken) gate.Release();
-        }
-    }
-
-    private async Task<ConnectorJob> RunCoreAsync(Guid connectorId, SyncMode? modeOverride,
-        string triggeredBy, CancellationToken ct)
-    {
         var config = await _uow.Connectors.GetByIdAsync(connectorId, ct)
             ?? throw new InvalidOperationException($"Connector {connectorId} not found.");
-
-        var activeJob = await _uow.ConnectorJobs.FirstOrDefaultAsync(
-            j => j.ConnectorId == connectorId && j.Status == JobStatus.Running, ct);
-        if (activeJob is not null)
-        {
-            var timeout = await GetStaleJobTimeoutAsync(ct);
-            var startedAt = activeJob.StartedAt ?? activeJob.CreatedAt;
-            if (DateTime.UtcNow - startedAt < timeout)
-            {
-                _logger.LogInformation(
-                    "Connector {ConnectorId} already has running job {JobId}; duplicate trigger skipped",
-                    connectorId, activeJob.Id);
-                return activeJob;
-            }
-
-            // The owning process died mid-run (restart/kill/OOM): close the orphan and take
-            // over, otherwise the connector stays blocked forever.
-            activeJob.Status = JobStatus.Failed;
-            activeJob.CompletedAt = DateTime.UtcNow;
-            activeJob.ErrorMessage =
-                $"Closed as stale after {timeout.TotalMinutes:0} minutes — the owning process likely restarted mid-run.";
-            _uow.ConnectorJobs.Update(activeJob);
-            // Persist BEFORE inserting the new Running row: ux_connector_jobs_one_running
-            // allows a single Running job per connector and EF may order the INSERT first.
-            await _uow.SaveChangesAsync(ct);
-            _logger.LogWarning("Stale running job {JobId} for connector {ConnectorId} closed; taking over",
-                activeJob.Id, connectorId);
-        }
 
         var job = new ConnectorJob
         {
@@ -103,27 +53,7 @@ public class ConnectorRunner : IConnectorRunner
             TriggeredBy = triggeredBy
         };
         await _uow.ConnectorJobs.AddAsync(job, ct);
-        try
-        {
-            await _uow.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains(
-                   "ux_connector_jobs_one_running", StringComparison.Ordinal) == true)
-        {
-            // The database is the final cross-process guard. A duplicate message is
-            // expected operationally: acknowledge it without retrying or ingesting.
-            _logger.LogInformation("Connector {ConnectorId} already has a running job; duplicate trigger skipped",
-                connectorId);
-            return new ConnectorJob
-            {
-                ConnectorId = connectorId,
-                Status = JobStatus.Cancelled,
-                StartedAt = DateTime.UtcNow,
-                CompletedAt = DateTime.UtcNow,
-                TriggeredBy = triggeredBy,
-                ErrorMessage = "Duplicate trigger skipped because a connector sync is already running."
-            };
-        }
+        await _uow.SaveChangesAsync(ct);
 
         var logLines = new List<string> { $"{DateTime.UtcNow:O} job started ({job.SyncMode})" };
         try
@@ -159,9 +89,6 @@ public class ConnectorRunner : IConnectorRunner
                         discovered.ExternalId, config.Name);
                     if (job.AssetsFailed <= 20)
                         logLines.Add($"{DateTime.UtcNow:O} ingest error {discovered.ExternalId}: {ex.Message}");
-                    // A failed save leaves broken entries in the shared change tracker; drop
-                    // them so this one asset cannot poison every subsequent SaveChanges.
-                    _uow.ClearChangeTracker();
                 }
             }
 
@@ -202,20 +129,7 @@ public class ConnectorRunner : IConnectorRunner
             config.LastRunStatus = job.Status;
             _uow.ConnectorJobs.Update(job);
             _uow.Connectors.Update(config);
-            try
-            {
-                await _uow.SaveChangesAsync(CancellationToken.None);
-            }
-            catch (Exception saveEx)
-            {
-                // The job row MUST be finalized or the connector stays blocked as Running.
-                // Retry once on a clean tracker with just the two bookkeeping rows.
-                _logger.LogError(saveEx, "Finalizing job {JobId} failed; retrying with a clean tracker", job.Id);
-                _uow.ClearChangeTracker();
-                _uow.ConnectorJobs.Update(job);
-                _uow.Connectors.Update(config);
-                await _uow.SaveChangesAsync(CancellationToken.None);
-            }
+            await _uow.SaveChangesAsync(CancellationToken.None);
             await _events.PublishAsync(EventTopics.ConnectorJobCompleted, new
             {
                 ConnectorId = config.Id,
@@ -226,15 +140,6 @@ public class ConnectorRunner : IConnectorRunner
             }, CancellationToken.None);
         }
         return job;
-    }
-
-    /// <summary>connectors.staleJobTimeoutMinutes setting (default 60): age after which a Running job is orphaned.</summary>
-    private async Task<TimeSpan> GetStaleJobTimeoutAsync(CancellationToken ct)
-    {
-        var setting = await _uow.Settings.FirstOrDefaultAsync(
-            s => s.Key == "connectors.staleJobTimeoutMinutes", ct);
-        return TimeSpan.FromMinutes(
-            setting is not null && int.TryParse(setting.Value, out var minutes) && minutes > 0 ? minutes : 60);
     }
 
     private ConnectorSettings ParseSettings(string settingsJson)

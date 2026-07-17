@@ -87,8 +87,6 @@ public class MergeEngine : IMergeEngine
         await Set(nameof(asset.BusinessUnit), asset.BusinessUnit, incoming.BusinessUnit,
             () => asset.BusinessUnit = incoming.BusinessUnit);
         await Set(nameof(asset.Location), asset.Location, incoming.Location, () => asset.Location = incoming.Location);
-        await Set(nameof(asset.Classification), asset.Classification, incoming.Classification,
-            () => asset.Classification = incoming.Classification);
 
         if (incoming.AssetType is { } at && at != AssetType.Unknown && asset.AssetType == AssetType.Unknown)
         {

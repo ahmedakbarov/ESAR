@@ -124,10 +124,7 @@ public class AssetIngestionService : IAssetIngestionService
     {
         await _merge.ApplyAsync(asset, incoming, ct);
         UpsertSourceLink(asset, incoming);
-        // asset was loaded by the current DbContext. Calling Update(asset) here marks
-        // every child in the graph as Modified; newly discovered IPs/tags already have
-        // generated GUIDs and would then cause UPDATE 0 rows concurrency failures.
-        // Change tracking correctly inserts those new child records during SaveChanges.
+        _uow.Assets.Update(asset);
     }
 
     private async Task<Asset> CreateNewAsync(DiscoveredAsset d, bool requiresApproval, CancellationToken ct)
