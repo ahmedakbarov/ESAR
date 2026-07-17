@@ -177,7 +177,9 @@ public static class DbSeeder
             ("reports.outputDirectory", "/data/reports", "Directory where generated reports are stored"),
             (SettingKeys.ApprovalRequireForNewAssets, "false",
                 "When true, newly discovered assets stay in Planned lifecycle until an owner approves them"),
-            ("dataquality.alertBelowScore", "50", "Publish DataQualityDegraded event when an asset scores below this")
+            ("dataquality.alertBelowScore", "50", "Publish DataQualityDegraded event when an asset scores below this"),
+            ("connectors.staleJobTimeoutMinutes", "60",
+                "Age in minutes after which a Running connector job is considered orphaned and auto-closed")
         };
         foreach (var (key, value, description) in defaults)
         {

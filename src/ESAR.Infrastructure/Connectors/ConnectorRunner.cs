@@ -70,9 +70,28 @@ public class ConnectorRunner : IConnectorRunner
             j => j.ConnectorId == connectorId && j.Status == JobStatus.Running, ct);
         if (activeJob is not null)
         {
-            _logger.LogInformation("Connector {ConnectorId} already has running job {JobId}; duplicate trigger skipped",
-                connectorId, activeJob.Id);
-            return activeJob;
+            var timeout = await GetStaleJobTimeoutAsync(ct);
+            var startedAt = activeJob.StartedAt ?? activeJob.CreatedAt;
+            if (DateTime.UtcNow - startedAt < timeout)
+            {
+                _logger.LogInformation(
+                    "Connector {ConnectorId} already has running job {JobId}; duplicate trigger skipped",
+                    connectorId, activeJob.Id);
+                return activeJob;
+            }
+
+            // The owning process died mid-run (restart/kill/OOM): close the orphan and take
+            // over, otherwise the connector stays blocked forever.
+            activeJob.Status = JobStatus.Failed;
+            activeJob.CompletedAt = DateTime.UtcNow;
+            activeJob.ErrorMessage =
+                $"Closed as stale after {timeout.TotalMinutes:0} minutes — the owning process likely restarted mid-run.";
+            _uow.ConnectorJobs.Update(activeJob);
+            // Persist BEFORE inserting the new Running row: ux_connector_jobs_one_running
+            // allows a single Running job per connector and EF may order the INSERT first.
+            await _uow.SaveChangesAsync(ct);
+            _logger.LogWarning("Stale running job {JobId} for connector {ConnectorId} closed; taking over",
+                activeJob.Id, connectorId);
         }
 
         var job = new ConnectorJob
@@ -191,6 +210,15 @@ public class ConnectorRunner : IConnectorRunner
             }, CancellationToken.None);
         }
         return job;
+    }
+
+    /// <summary>connectors.staleJobTimeoutMinutes setting (default 60): age after which a Running job is orphaned.</summary>
+    private async Task<TimeSpan> GetStaleJobTimeoutAsync(CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(
+            s => s.Key == "connectors.staleJobTimeoutMinutes", ct);
+        return TimeSpan.FromMinutes(
+            setting is not null && int.TryParse(setting.Value, out var minutes) && minutes > 0 ? minutes : 60);
     }
 
     private ConnectorSettings ParseSettings(string settingsJson)

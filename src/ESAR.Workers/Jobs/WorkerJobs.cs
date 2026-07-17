@@ -146,6 +146,45 @@ public class MaintenanceJobs
     [AutomaticRetry(Attempts = 2)]
     public async Task ProcessLifecycleAsync(CancellationToken ct) => await _lifecycle.ProcessStaleAssetsAsync(ct);
 
+    /// <summary>
+    /// Closes Running connector jobs whose owning process died (restart/kill/OOM) so that
+    /// synchronization unblocks — the partial unique index allows only one Running job per
+    /// connector. startupSweep=true uses a short 5-minute grace: a freshly started worker
+    /// cannot own any long-running job.
+    /// </summary>
+    [AutomaticRetry(Attempts = 2)]
+    public async Task CloseStaleConnectorJobsAsync(bool startupSweep, CancellationToken ct)
+    {
+        TimeSpan timeout;
+        if (startupSweep)
+        {
+            timeout = TimeSpan.FromMinutes(5);
+        }
+        else
+        {
+            var setting = await _uow.Settings.FirstOrDefaultAsync(
+                s => s.Key == "connectors.staleJobTimeoutMinutes", ct);
+            timeout = TimeSpan.FromMinutes(
+                setting is not null && int.TryParse(setting.Value, out var minutes) && minutes > 0 ? minutes : 60);
+        }
+
+        var cutoff = DateTime.UtcNow - timeout;
+        var stale = await _uow.ConnectorJobs.ListAsync(
+            j => j.Status == JobStatus.Running && (j.StartedAt ?? j.CreatedAt) < cutoff, ct);
+        foreach (var job in stale)
+        {
+            job.Status = JobStatus.Failed;
+            job.CompletedAt = DateTime.UtcNow;
+            job.ErrorMessage = "Closed as stale — the owning process likely restarted mid-run.";
+            _uow.ConnectorJobs.Update(job);
+        }
+        if (stale.Count > 0)
+        {
+            await _uow.SaveChangesAsync(ct);
+            _logger.LogWarning("Closed {Count} stale running connector job(s)", stale.Count);
+        }
+    }
+
     /// <summary>Purges old telemetry per retention policy (events 90d, jobs 30d, notifications 30d).</summary>
     [AutomaticRetry(Attempts = 2)]
     public async Task CleanupAsync(CancellationToken ct)
