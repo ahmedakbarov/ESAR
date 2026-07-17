@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Esar.Application.Abstractions;
 using Esar.Application.Incidents;
 using Esar.Application.Ingestion;
@@ -15,6 +16,9 @@ namespace Esar.Infrastructure.Connectors;
 /// </summary>
 public class ConnectorRunner : IConnectorRunner
 {
+    // One VM runs a single worker process. This prevents duplicate manual/scheduled runs
+    // from concurrently updating the same golden records.
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> ConnectorLocks = new();
     private readonly IUnitOfWork _uow;
     private readonly IConnectorFactory _factory;
     private readonly IAssetIngestionService _ingestion;
@@ -40,6 +44,21 @@ public class ConnectorRunner : IConnectorRunner
 
     public async Task<ConnectorJob> RunAsync(Guid connectorId, SyncMode? modeOverride = null,
         string triggeredBy = "scheduler", CancellationToken ct = default)
+    {
+        var gate = ConnectorLocks.GetOrAdd(connectorId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            return await RunCoreAsync(connectorId, modeOverride, triggeredBy, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<ConnectorJob> RunCoreAsync(Guid connectorId, SyncMode? modeOverride,
+        string triggeredBy, CancellationToken ct)
     {
         var config = await _uow.Connectors.GetByIdAsync(connectorId, ct)
             ?? throw new InvalidOperationException($"Connector {connectorId} not found.");

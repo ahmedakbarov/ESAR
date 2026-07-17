@@ -21,6 +21,7 @@ public class DiscoveryJobs
     }
 
     [Queue("discovery")]
+    [DisableConcurrentExecution(timeoutInSeconds: 3600)]
     [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
     public async Task RunConnectorAsync(Guid connectorId, CancellationToken ct)
     {

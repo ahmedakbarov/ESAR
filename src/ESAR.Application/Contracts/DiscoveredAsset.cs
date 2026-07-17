@@ -37,6 +37,7 @@ public class DiscoveredAsset
     public string? Department { get; set; }
     public string? BusinessUnit { get; set; }
     public string? Location { get; set; }
+    public string? Classification { get; set; }
     public EnvironmentType? Environment { get; set; }
     public CriticalityLevel? Criticality { get; set; }
 
