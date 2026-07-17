@@ -8,10 +8,18 @@ export default function Users() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ username: '', email: '', displayName: '', password: '', role: 'Viewer' });
   const [error, setError] = useState('');
+  const [resetUser, setResetUser] = useState<any>(null);
+  const [newPassword, setNewPassword] = useState('');
 
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
     client.get('/roles').then((r) => setRoles(r.data));
+  };
+
+  const resetPassword = async () => {
+    if (newPassword.length < 12) { setError('Password must be at least 12 characters.'); return; }
+    try { await client.post(`/users/${resetUser.id}/reset-password`, { newPassword }); setResetUser(null); setNewPassword(''); setError(''); }
+    catch (err: any) { setError(err.response?.data?.error ?? 'Password reset failed'); }
   };
   useEffect(load, []);
 
@@ -55,7 +63,7 @@ export default function Users() {
         <table className="data">
           <thead>
             <tr><th>Username</th><th>Display Name</th><th>Email</th><th>Provider</th>
-              <th>Roles</th><th>Active</th><th>Last Login</th></tr>
+              <th>Roles</th><th>Active</th><th>Last Login</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {users.map((u) => (
@@ -67,11 +75,19 @@ export default function Users() {
                 <td>{u.roles.map((r: string) => <span key={r} className="badge blue" style={{ marginRight: 4 }}>{r}</span>)}</td>
                 <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
                 <td className="muted">{formatDate(u.lastLoginAt)}</td>
+                <td>{u.provider === 'Local' && <button className="secondary" onClick={() => { setResetUser(u); setNewPassword(''); setError(''); }}>Reset password</button>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {resetUser && <div className="card" style={{ position: 'fixed', top: 100, right: 24, width: 360, zIndex: 10 }}>
+        <h3>Reset password: {resetUser.username}</h3>
+        <input type="password" placeholder="New password (12+ characters)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
+        <div style={{ marginTop: 10 }}><button onClick={resetPassword}>Reset</button><button className="secondary" onClick={() => setResetUser(null)} style={{ marginLeft: 6 }}>Cancel</button></div>
+      </div>}
 
       <h2 className="section-title">Roles</h2>
       <div className="card">

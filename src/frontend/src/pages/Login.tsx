@@ -1,14 +1,16 @@
 import { FormEvent, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const expired = new URLSearchParams(location.search).get('reason') === 'expired';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -16,6 +18,7 @@ export default function Login() {
     setError('');
     try {
       await login(username, password);
+      sessionStorage.removeItem('esar_session_redirecting');
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.error ?? 'Login failed');
@@ -29,6 +32,7 @@ export default function Login() {
       <div className="card login-card">
         <h2>E<span style={{ color: 'var(--accent)' }}>SAR</span></h2>
         <p>Enterprise Security Asset Registry</p>
+        {expired && <div className="error">Your session has expired. Please sign in again.</div>}
         <form onSubmit={submit}>
           <input
             placeholder="Username"

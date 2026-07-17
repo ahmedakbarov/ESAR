@@ -11,10 +11,13 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
       localStorage.removeItem('esar_token');
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+      localStorage.removeItem('esar_name');
+      localStorage.removeItem('esar_roles');
+      if (!window.location.pathname.startsWith('/login') && !sessionStorage.getItem('esar_session_redirecting')) {
+        sessionStorage.setItem('esar_session_redirecting', '1');
+        window.location.assign('/login?reason=expired');
       }
     }
     return Promise.reject(error);

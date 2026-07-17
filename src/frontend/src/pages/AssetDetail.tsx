@@ -9,6 +9,9 @@ export default function AssetDetail() {
   const [history, setHistory] = useState<any[]>([]);
   const [relationships, setRelationships] = useState<any[]>([]);
   const [impact, setImpact] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [edit, setEdit] = useState<any>({});
+  const [editError, setEditError] = useState('');
 
   useEffect(() => {
     client.get(`/assets/${id}`).then((r) => setAsset(r.data));
@@ -20,6 +23,16 @@ export default function AssetDetail() {
   const analyzeImpact = () =>
     client.get(`/relationships/asset/${id}/impact?depth=3`).then((r) => setImpact(r.data));
 
+  const openEdit = () => {
+    setEditError('');
+    setEdit(Object.fromEntries(['ownerName', 'ownerEmail', 'department', 'businessUnit', 'location', 'classification', 'environment', 'criticality', 'lifecycleStatus', 'status'].map((key) => [key, asset[key] ?? ''])));
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    try { await client.put(`/assets/${id}`, edit); setAsset((await client.get(`/assets/${id}`)).data); setEditing(false); }
+    catch (err: any) { setEditError(err.response?.data?.error ?? 'Asset update failed.'); }
+  };
+
   if (!asset) return <div className="muted">Loading…</div>;
 
   const scoreTone = (v: number) => (v >= 80 ? 'good' : v >= 50 ? 'warn' : 'bad');
@@ -28,6 +41,7 @@ export default function AssetDetail() {
     <>
       <div className="topbar">
         <h1>{asset.hostname} <Badge value={asset.status} /></h1>
+        <button className="secondary" onClick={openEdit}>Edit</button>
         <button
           className="secondary"
           onClick={() => client.post(`/compliance/assets/${id}/evaluate`).then(() =>
@@ -36,6 +50,18 @@ export default function AssetDetail() {
           Re-evaluate compliance
         </button>
       </div>
+      {editing && <div className="card" style={{ marginBottom: 16 }}>
+        <h3>Edit asset</h3>
+        <div className="filters">
+          {['ownerName', 'ownerEmail', 'department', 'businessUnit', 'location', 'classification'].map((field) => <input key={field} type={field === 'ownerEmail' ? 'email' : 'text'} placeholder={field} value={edit[field]} onChange={(e) => setEdit({ ...edit, [field]: e.target.value || null })} />)}
+          <select value={edit.environment} onChange={(e) => setEdit({ ...edit, environment: e.target.value })}>{['Unknown', 'Production', 'Staging', 'Test', 'Development', 'DisasterRecovery'].map((x) => <option key={x}>{x}</option>)}</select>
+          <select value={edit.criticality} onChange={(e) => setEdit({ ...edit, criticality: e.target.value })}>{['Unknown', 'Critical', 'High', 'Medium', 'Low'].map((x) => <option key={x}>{x}</option>)}</select>
+          <select value={edit.lifecycleStatus} onChange={(e) => setEdit({ ...edit, lifecycleStatus: e.target.value })}>{['Unknown', 'Planned', 'Provisioning', 'Active', 'Maintenance', 'Decommissioning', 'Retired'].map((x) => <option key={x}>{x}</option>)}</select>
+          <select value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>{['Unknown', 'Active', 'Inactive', 'Offline', 'Quarantined', 'Decommissioned'].map((x) => <option key={x}>{x}</option>)}</select>
+        </div>
+        {editError && <div className="error" style={{ marginTop: 8 }}>{editError}</div>}
+        <div style={{ marginTop: 10 }}><button onClick={saveEdit}>Save changes</button><button className="secondary" onClick={() => setEditing(false)} style={{ marginLeft: 6 }}>Cancel</button></div>
+      </div>}
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <StatCard label="Compliance" value={`${asset.complianceScore}%`}
