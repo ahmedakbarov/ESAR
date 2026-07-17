@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  ASPNETCORE_ENVIRONMENT: {{ .Values.config.environment | quote }}
+  DOTNET_ENVIRONMENT: {{ .Values.config.environment | quote }}
+  ConnectionStrings__Redis: {{ .Values.config.redisConnection | quote }}
+  RabbitMq__Host: {{ .Values.config.rabbitmqHost | quote }}
+  RabbitMq__Username: {{ .Values.config.rabbitmqUser | quote }}
+  Database__AutoMigrate: {{ .Values.config.autoMigrate | quote }}
+  Cors__AllowedOrigins__0: {{ .Values.config.corsOrigin | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-secrets
+type: Opaque
+stringData:
+  ConnectionStrings__Postgres: {{ .Values.secrets.postgresConnection | quote }}
+  RabbitMq__Password: {{ .Values.secrets.rabbitmqPassword | quote }}
+  Jwt__SigningKey: {{ .Values.secrets.jwtSigningKey | quote }}
+  Security__EncryptionKey: {{ .Values.secrets.encryptionKey | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-reports
+spec:
+  accessModes: [{{ .Values.persistence.reports.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.reports.size }}
