@@ -30,12 +30,18 @@ public class GenericRepository<T> : IRepository<T> where T : class
     public async Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default)
         => await Db.Set<T>().AddRangeAsync(entities, ct);
     /// <summary>
-    /// Marks only the supplied aggregate/entity as modified. DbSet.Update traverses
-    /// its full navigation graph and wrongly treats new children with generated GUIDs
-    /// (for example discovered AssetIp/AssetTag/AssetRisk records) as existing rows.
-    /// Tracked navigation changes are still detected and inserted by SaveChanges.
+    /// State-aware update. Entities loaded from this scoped context are already tracked:
+    /// SaveChanges/DetectChanges computes real scalar changes and marks brand-new children
+    /// reachable via navigations (discovered AssetIp/AssetTag/AssetRisk rows) as Added.
+    /// Forcing State=Modified unconditionally flipped Added entities (not yet inserted)
+    /// to Modified → UPDATE affected 0 rows → DbUpdateConcurrencyException that poisoned
+    /// the whole connector run. Only genuinely detached entities need explicit attach.
     /// </summary>
-    public void Update(T entity) => Db.Entry(entity).State = EntityState.Modified;
+    public void Update(T entity)
+    {
+        var entry = Db.Entry(entity);
+        if (entry.State == EntityState.Detached) entry.State = EntityState.Modified;
+    }
     public void Remove(T entity) => Db.Set<T>().Remove(entity);
 }
 
@@ -264,4 +270,6 @@ public class UnitOfWork : IUnitOfWork
     public IRepository<Setting> Settings { get; }
 
     public Task<int> SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
+
+    public void ClearChangeTracker() => _db.ChangeTracker.Clear();
 }

@@ -58,4 +58,7 @@ public interface IUnitOfWork
     IRepository<Report> Reports { get; }
     IRepository<Setting> Settings { get; }
     Task<int> SaveChangesAsync(CancellationToken ct = default);
+    /// <summary>Detaches every tracked entity — recovery hatch after a failed SaveChanges
+    /// so one poisoned aggregate cannot break subsequent saves in the same scope.</summary>
+    void ClearChangeTracker();
 }
