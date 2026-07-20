@@ -104,8 +104,8 @@ public class MergeEngine : IMergeEngine
             changed.Add(nameof(asset.Criticality));
         }
 
-        MergeInterfaces(asset, incoming);
-        MergeTags(asset, incoming);
+        await MergeInterfacesAsync(asset, incoming, ct);
+        await MergeTagsAsync(asset, incoming, ct);
         MergeSoftware(asset, incoming);
 
         asset.LastSeen = incoming.SeenAt > asset.LastSeen ? incoming.SeenAt : asset.LastSeen;
@@ -161,7 +161,7 @@ public class MergeEngine : IMergeEngine
             duplicate.Id, survivor.Id, mergedBy);
     }
 
-    private static void MergeInterfaces(Asset asset, DiscoveredAsset incoming)
+    private async Task MergeInterfacesAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
     {
         foreach (var iface in incoming.Interfaces)
         {
@@ -178,7 +178,7 @@ public class MergeEngine : IMergeEngine
                 (iface.IpAddress == null && iface.MacAddress != null && i.MacAddress == iface.MacAddress));
             if (existing is null)
             {
-                asset.IpAddresses.Add(new AssetIp
+                var created = new AssetIp
                 {
                     AssetId = asset.Id,
                     IpAddress = iface.IpAddress ?? string.Empty,
@@ -186,7 +186,12 @@ public class MergeEngine : IMergeEngine
                     IsPrimary = iface.IsPrimary,
                     Source = incoming.Source,
                     LastSeen = incoming.SeenAt
-                });
+                };
+                asset.IpAddresses.Add(created);
+                // Asset children use client-generated GUID keys. Register them explicitly
+                // so EF inserts, rather than graph-updates, the new interface when the
+                // parent asset was loaded from the current DbContext.
+                await _uow.AssetIps.AddAsync(created, ct);
             }
             else
             {
@@ -204,13 +209,19 @@ public class MergeEngine : IMergeEngine
         }
     }
 
-    private static void MergeTags(Asset asset, DiscoveredAsset incoming)
+    private async Task MergeTagsAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
     {
         foreach (var (key, value) in incoming.Tags)
         {
             var existing = asset.Tags.FirstOrDefault(t => t.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
             if (existing is null)
-                asset.Tags.Add(new AssetTag { AssetId = asset.Id, Key = key, Value = value, Source = incoming.Source });
+            {
+                var created = new AssetTag { AssetId = asset.Id, Key = key, Value = value, Source = incoming.Source };
+                asset.Tags.Add(created);
+                // See the AssetIp note above: explicit Add avoids a 0-row UPDATE for
+                // a new client-keyed dependent during connector ingestion.
+                await _uow.AssetTags.AddAsync(created, ct);
+            }
             else if (existing.Source == incoming.Source)
                 existing.Value = value;
         }

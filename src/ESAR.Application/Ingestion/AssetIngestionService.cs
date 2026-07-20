@@ -123,7 +123,7 @@ public class AssetIngestionService : IAssetIngestionService
     private async Task UpdateExistingAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
     {
         await _merge.ApplyAsync(asset, incoming, ct);
-        UpsertSourceLink(asset, incoming);
+        await UpsertSourceLinkAsync(asset, incoming, ct);
         _uow.Assets.Update(asset);
     }
 
@@ -140,17 +140,17 @@ public class AssetIngestionService : IAssetIngestionService
             CreatedBy = $"connector:{d.Source}"
         };
         await _merge.ApplyAsync(asset, d, ct);
-        UpsertSourceLink(asset, d);
+        await UpsertSourceLinkAsync(asset, d, ct);
         await _uow.Assets.AddAsync(asset, ct);
         return asset;
     }
 
-    private static void UpsertSourceLink(Asset asset, DiscoveredAsset d)
+    private async Task UpsertSourceLinkAsync(Asset asset, DiscoveredAsset d, CancellationToken ct)
     {
         var link = asset.Sources.FirstOrDefault(s => s.ConnectorType == d.Source && s.ExternalId == d.ExternalId);
         if (link is null)
         {
-            asset.Sources.Add(new AssetSource
+            var created = new AssetSource
             {
                 AssetId = asset.Id,
                 ConnectorType = d.Source,
@@ -159,7 +159,11 @@ public class AssetIngestionService : IAssetIngestionService
                 RawData = d.RawJson,
                 FirstSeen = d.SeenAt,
                 LastSeen = d.SeenAt
-            });
+            };
+            asset.Sources.Add(created);
+            // Source links also use client-generated GUID keys. Explicitly registering the
+            // dependent keeps an Azure-to-AD auto-merge from producing a zero-row UPDATE.
+            await _uow.AssetSources.AddAsync(created, ct);
         }
         else
         {

@@ -219,6 +219,7 @@ public class UnitOfWork : IUnitOfWork
         Assets = new AssetRepository(db);
         AssetSources = new GenericRepository<AssetSource>(db);
         AssetIps = new GenericRepository<AssetIp>(db);
+        AssetTags = new GenericRepository<AssetTag>(db);
         AssetHistories = new GenericRepository<AssetHistory>(db);
         AssetCompliance = new GenericRepository<AssetCompliance>(db);
         Relationships = new GenericRepository<AssetRelationship>(db);
@@ -246,6 +247,7 @@ public class UnitOfWork : IUnitOfWork
     public IAssetRepository Assets { get; }
     public IRepository<AssetSource> AssetSources { get; }
     public IRepository<AssetIp> AssetIps { get; }
+    public IRepository<AssetTag> AssetTags { get; }
     public IRepository<AssetHistory> AssetHistories { get; }
     public IRepository<AssetCompliance> AssetCompliance { get; }
     public IRepository<AssetRelationship> Relationships { get; }

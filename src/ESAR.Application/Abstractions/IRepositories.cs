@@ -35,6 +35,7 @@ public interface IUnitOfWork
     IAssetRepository Assets { get; }
     IRepository<AssetSource> AssetSources { get; }
     IRepository<AssetIp> AssetIps { get; }
+    IRepository<AssetTag> AssetTags { get; }
     IRepository<AssetHistory> AssetHistories { get; }
     IRepository<AssetCompliance> AssetCompliance { get; }
     IRepository<AssetRelationship> Relationships { get; }

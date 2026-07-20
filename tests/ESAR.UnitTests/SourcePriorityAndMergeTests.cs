@@ -67,12 +67,20 @@ public class MergeEngineTests
 {
     private readonly Mock<IUnitOfWork> _uow = new();
     private readonly Mock<IRepository<AssetHistory>> _history = new();
+    private readonly Mock<IRepository<AssetIp>> _ips = new();
+    private readonly Mock<IRepository<AssetTag>> _tags = new();
     private readonly Mock<ISourcePriorityEngine> _priority = new();
     private readonly MergeEngine _sut;
 
     public MergeEngineTests()
     {
         _uow.SetupGet(u => u.AssetHistories).Returns(_history.Object);
+        _uow.SetupGet(u => u.AssetIps).Returns(_ips.Object);
+        _uow.SetupGet(u => u.AssetTags).Returns(_tags.Object);
+        _ips.Setup(repository => repository.AddAsync(It.IsAny<AssetIp>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _tags.Setup(repository => repository.AddAsync(It.IsAny<AssetTag>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         _sut = new MergeEngine(_uow.Object, _priority.Object, NullLogger<MergeEngine>.Instance);
     }
 
@@ -194,5 +202,29 @@ public class MergeEngineTests
 
         asset.IpAddresses.Should().ContainSingle(networkInterface => networkInterface.IpAddress == "10.0.0.5" && networkInterface.IsPrimary);
         asset.IpAddresses.Should().ContainSingle(networkInterface => networkInterface.IpAddress == "10.0.0.4" && !networkInterface.IsPrimary);
+    }
+
+    [Fact]
+    public async Task New_connector_interface_and_tag_are_registered_as_added_dependents()
+    {
+        var asset = new Asset { Hostname = "azure-vm", NormalizedHostname = "azure-vm" };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-vm-1",
+            Interfaces = { new DiscoveredInterface { IpAddress = "10.0.0.4", MacAddress = "00:11:22:33:44:55", IsPrimary = true } },
+            Tags = { ["public_ip"] = "true" }
+        };
+
+        await _sut.ApplyAsync(asset, incoming);
+
+        asset.IpAddresses.Should().ContainSingle(interfaceValue => interfaceValue.IpAddress == "10.0.0.4");
+        asset.Tags.Should().ContainSingle(tag => tag.Key == "public_ip" && tag.Value == "true");
+        _ips.Verify(repository => repository.AddAsync(
+            It.Is<AssetIp>(ip => ip.AssetId == asset.Id && ip.IpAddress == "10.0.0.4" && ip.Source == ConnectorType.Azure),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _tags.Verify(repository => repository.AddAsync(
+            It.Is<AssetTag>(tag => tag.AssetId == asset.Id && tag.Key == "public_ip" && tag.Source == ConnectorType.Azure),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }
