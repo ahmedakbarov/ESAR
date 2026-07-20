@@ -333,10 +333,17 @@ public class AzureConnector : AadConnectorBase
             Logger.LogWarning(ex, "Azure NIC enrichment failed — returning VMs without IP/MAC");
             nics = new List<JsonElement>();
         }
+        var matched = 0;
+        var sampleNicVm = nics.Count > 0 ? GetString(nics[0], "vmResourceId") : "(none)";
+        var sampleAssetKey = assets.Keys.FirstOrDefault() ?? "(none)";
+        Logger.LogInformation(
+            "Azure NIC enrichment: {Vms} VMs, {Nics} NIC rows. sampleNicVm={NicVm} sampleAssetKey={AssetKey}",
+            assets.Count, nics.Count, sampleNicVm, sampleAssetKey);
         foreach (var nic in nics)
         {
             var vmResourceId = GetString(nic, "vmResourceId");
             if (vmResourceId is null || !assets.TryGetValue(vmResourceId, out var asset)) continue;
+            matched++;
             var privateIp = GetString(nic, "privateIp");
             var mac = GetString(nic, "mac");
             if (!string.IsNullOrEmpty(privateIp) || !string.IsNullOrEmpty(mac))
@@ -353,6 +360,7 @@ public class AzureConnector : AadConnectorBase
             }
         }
 
+        Logger.LogInformation("Azure NIC enrichment: {Matched} NIC rows matched to VMs", matched);
         foreach (var asset in assets.Values) yield return asset;
     }
 
