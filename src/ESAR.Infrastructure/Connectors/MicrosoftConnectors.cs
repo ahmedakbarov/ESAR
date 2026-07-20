@@ -334,11 +334,9 @@ public class AzureConnector : AadConnectorBase
             nics = new List<JsonElement>();
         }
         var matched = 0;
-        var sampleNicVm = nics.Count > 0 ? GetString(nics[0], "vmResourceId") : "(none)";
-        var sampleAssetKey = assets.Keys.FirstOrDefault() ?? "(none)";
-        Logger.LogInformation(
-            "Azure NIC enrichment: {Vms} VMs, {Nics} NIC rows. sampleNicVm={NicVm} sampleAssetKey={AssetKey}",
-            assets.Count, nics.Count, sampleNicVm, sampleAssetKey);
+        var added = 0;
+        if (nics.Count > 0)
+            Logger.LogInformation("Azure NIC sample raw row: {Row}", nics[0].GetRawText());
         foreach (var nic in nics)
         {
             var vmResourceId = GetString(nic, "vmResourceId");
@@ -347,12 +345,15 @@ public class AzureConnector : AadConnectorBase
             var privateIp = GetString(nic, "privateIp");
             var mac = GetString(nic, "mac");
             if (!string.IsNullOrEmpty(privateIp) || !string.IsNullOrEmpty(mac))
+            {
                 asset.Interfaces.Add(new DiscoveredInterface
                 {
                     IpAddress = string.IsNullOrEmpty(privateIp) ? null : privateIp,
                     MacAddress = string.IsNullOrEmpty(mac) ? null : mac,
                     IsPrimary = asset.Interfaces.Count == 0
                 });
+                added++;
+            }
             if (!string.IsNullOrEmpty(GetString(nic, "publicIpId")))
             {
                 asset.Tags["public_ip"] = "true";
@@ -360,7 +361,7 @@ public class AzureConnector : AadConnectorBase
             }
         }
 
-        Logger.LogInformation("Azure NIC enrichment: {Matched} NIC rows matched to VMs", matched);
+        Logger.LogInformation("Azure NIC enrichment: {Matched} matched, {Added} interfaces added", matched, added);
         foreach (var asset in assets.Values) yield return asset;
     }
 
