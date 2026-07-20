@@ -112,7 +112,17 @@ public class MatchingEngine : IMatchingEngine
         result.ConfidenceScore = Math.Round(bestScore, 4);
         result.MatchType = MatchType.Soft;
         result.Explanations = bestExplanations;
-        result.Decision = bestScore >= options.AutoMergeThreshold ? MatchDecision.AutoMerged
+
+        // An IP address is commonly reassigned, so it cannot be the sole positive
+        // soft-match signal for an automatic merge. Keep the candidate linked to
+        // the proposed asset for an analyst to review instead.
+        var hasIpOnlyPositiveEvidence = bestExplanations.Any(e =>
+            e.Matched && string.Equals(e.Attribute, MatchAttributes.IpAddress, StringComparison.OrdinalIgnoreCase)) &&
+            bestExplanations.Where(e => e.Matched).All(e =>
+                string.Equals(e.Attribute, MatchAttributes.IpAddress, StringComparison.OrdinalIgnoreCase));
+
+        result.Decision = hasIpOnlyPositiveEvidence ? MatchDecision.QueuedForReview
+            : bestScore >= options.AutoMergeThreshold ? MatchDecision.AutoMerged
             : bestScore >= options.ReviewThreshold ? MatchDecision.QueuedForReview
             : MatchDecision.NewAsset;
 

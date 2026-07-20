@@ -166,8 +166,15 @@ public class MergeEngine : IMergeEngine
         foreach (var iface in incoming.Interfaces)
         {
             if (iface.IpAddress is null && iface.MacAddress is null) continue;
+            if (iface.IsPrimary)
+            {
+                foreach (var sourceInterface in asset.IpAddresses.Where(i => i.Source == incoming.Source))
+                    sourceInterface.IsPrimary = false;
+            }
+
             var existing = asset.IpAddresses.FirstOrDefault(i =>
-                (iface.IpAddress != null && i.IpAddress == iface.IpAddress) ||
+                (iface.IpAddress != null && i.IpAddress == iface.IpAddress &&
+                    (iface.MacAddress is null || i.MacAddress == iface.MacAddress || i.Source == incoming.Source)) ||
                 (iface.IpAddress == null && iface.MacAddress != null && i.MacAddress == iface.MacAddress));
             if (existing is null)
             {
@@ -183,7 +190,15 @@ public class MergeEngine : IMergeEngine
             }
             else
             {
-                existing.MacAddress ??= iface.MacAddress;
+                // A source may legitimately replace a NIC while retaining its IP.
+                // Refresh that source's MAC observation rather than retaining the old
+                // address and letting it become a false cross-source match signal.
+                if (existing.Source == incoming.Source && !string.IsNullOrWhiteSpace(iface.MacAddress))
+                    existing.MacAddress = iface.MacAddress;
+                if (existing.Source == incoming.Source)
+                    existing.IsPrimary = iface.IsPrimary;
+                else
+                    existing.IsPrimary |= iface.IsPrimary;
                 existing.LastSeen = incoming.SeenAt;
             }
         }

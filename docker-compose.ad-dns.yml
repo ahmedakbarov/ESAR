@@ -1,0 +1,11 @@
+# Optional private DNS overlay for AD endpoint hostname resolution during inventory.
+# Prefer Azure VNet DNS integrated with AD DNS. Use only when Docker cannot resolve
+# the AD domain and set AD_DNS_SERVER to a private DNS/DC address.
+services:
+  esar-api:
+    dns:
+      - "${AD_DNS_SERVER:?Set AD_DNS_SERVER to the private AD DNS server IP}"
+
+  esar-workers:
+    dns:
+      - "${AD_DNS_SERVER:?Set AD_DNS_SERVER to the private AD DNS server IP}"

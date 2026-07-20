@@ -30,7 +30,10 @@ function parseSettings(text: string): Record<string, string> {
 
 function settingsPlaceholder(type: string): string {
   if (type === 'ActiveDirectory') {
-    return 'server=dc01.esar.local\\nport=636\\nbaseDn=DC=esar,DC=local\\nusername=svc_esar_ad@esar.local\\npassword=...\\nuseSsl=true\\nauthType=Basic\\ntimeoutSeconds=30';
+    return 'server=dc01.esar.local\\nport=636\\nbaseDn=DC=esar,DC=local\\nusername=svc_esar_ad@esar.local\\npassword=...\\nuseSsl=true\\nauthType=Basic\\ntimeoutSeconds=30\\nresolveDns=true\\ndnsTimeoutSeconds=5\\ndnsMaxConcurrency=8';
+  }
+  if (type === 'Azure') {
+    return 'tenantId=...\\nclientId=...\\nclientSecret=...\\nsubscriptionIds=00000000-0000-0000-0000-000000000000';
   }
   return 'tenantId=...\\nclientId=...\\nclientSecret=...';
 }
@@ -126,10 +129,10 @@ export default function Connectors() {
           </div>
           <h3>
             {form.type === 'ActiveDirectory'
-              ? 'Active Directory: use the DC FQDN, LDAPS port 636, and a read-only UPN or bind DN. Keep *** to preserve an existing encrypted password.'
+              ? 'Active Directory: use the DC FQDN, LDAPS port 636, and a read-only UPN or bind DN. resolveDns needs private AD DNS and adds IP-only evidence; keep *** to preserve an existing encrypted password.'
               : 'Settings (key=value per line; secrets are encrypted at rest, keep *** to preserve)'}
           </h3>
-          <textarea rows={form.type === 'ActiveDirectory' ? 9 : 5} style={{ width: '100%', fontFamily: 'monospace' }}
+          <textarea rows={form.type === 'ActiveDirectory' ? 12 : 5} style={{ width: '100%', fontFamily: 'monospace' }}
             placeholder={settingsPlaceholder(form.type)}
             value={form.settingsText}
             onChange={(e) => setForm({ ...form, settingsText: e.target.value })} />

@@ -108,7 +108,7 @@ public class MatchingEngineTests
     }
 
     [Fact]
-    public async Task Weak_overlap_only_ip_creates_new_asset()
+    public async Task Ip_only_positive_evidence_is_queued_for_review_even_below_threshold()
     {
         var existing = new Asset
         {
@@ -136,7 +136,95 @@ public class MatchingEngineTests
         var result = await _sut.MatchAsync(candidate);
 
         // Only IP matches: 0.15 / 0.95 ≈ 0.16 → far below review threshold.
-        result.Decision.Should().Be(MatchDecision.NewAsset);
-        result.MatchedAsset.Should().BeNull();
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.MatchedAsset.Should().BeSameAs(existing);
+    }
+
+    [Fact]
+    public async Task Ip_only_match_is_queued_for_review_even_when_it_scores_as_an_auto_merge()
+    {
+        var existing = new Asset
+        {
+            IpAddresses = { new AssetIp { IpAddress = "10.1.1.5" } }
+        };
+        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var candidate = new DiscoveredAsset
+        {
+            Source = ConnectorType.Tenable,
+            ExternalId = "t-2",
+            Interfaces = { new DiscoveredInterface { IpAddress = "10.1.1.5" } }
+        };
+
+        var result = await _sut.MatchAsync(candidate);
+
+        result.ConfidenceScore.Should().Be(1.0m);
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.MatchedAsset.Should().BeSameAs(existing);
+        result.Explanations.Where(e => e.Matched).Should().ContainSingle(e => e.Attribute == MatchAttributes.IpAddress);
+    }
+
+    [Fact]
+    public async Task Ip_and_mac_match_can_auto_merge_when_threshold_is_met()
+    {
+        var existing = new Asset
+        {
+            IpAddresses = { new AssetIp { IpAddress = "10.1.1.5", MacAddress = "00:1a:2b:3c:4d:5e" } }
+        };
+        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var candidate = new DiscoveredAsset
+        {
+            Source = ConnectorType.Tenable,
+            ExternalId = "t-3",
+            Interfaces = { new DiscoveredInterface { IpAddress = "10.1.1.5", MacAddress = "00:1a:2b:3c:4d:5e" } }
+        };
+
+        var result = await _sut.MatchAsync(candidate);
+
+        result.ConfidenceScore.Should().Be(1.0m);
+        result.Decision.Should().Be(MatchDecision.AutoMerged);
+        result.MatchedAsset.Should().BeSameAs(existing);
+    }
+
+    [Fact]
+    public async Task Ip_and_hostname_match_can_auto_merge_when_threshold_is_met()
+    {
+        var existing = new Asset
+        {
+            Hostname = "srv-web01",
+            NormalizedHostname = "srv-web01",
+            IpAddresses = { new AssetIp { IpAddress = "10.1.1.5" } }
+        };
+        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var candidate = new DiscoveredAsset
+        {
+            Source = ConnectorType.Tenable,
+            ExternalId = "t-4",
+            Hostname = "srv-web01",
+            Interfaces = { new DiscoveredInterface { IpAddress = "10.1.1.5" } }
+        };
+
+        var result = await _sut.MatchAsync(candidate);
+
+        result.ConfidenceScore.Should().Be(1.0m);
+        result.Decision.Should().Be(MatchDecision.AutoMerged);
+        result.MatchedAsset.Should().BeSameAs(existing);
     }
 }

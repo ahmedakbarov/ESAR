@@ -230,8 +230,14 @@ public class AzureConnector : AadConnectorBase
     {
         try
         {
-            await AcquireTokenAsync(settings, ArmScope, ct);
-            return new ConnectorHealth(true, "Token acquired for Azure Resource Manager");
+            var subscriptions = AzureResourceGraph.ParseSubscriptionIds(settings);
+            var token = await AcquireTokenAsync(settings, ArmScope, ct);
+            await QueryAllAsync(token, "Resources | project id | take 1", subscriptions,
+                new SyncContext { RateLimitPerMinute = 0 }, ct);
+            await QueryAllAsync(token,
+                "Resources | where type =~ 'microsoft.network/networkinterfaces' | project id | take 1",
+                subscriptions, new SyncContext { RateLimitPerMinute = 0 }, ct);
+            return new ConnectorHealth(true, "Azure Resource Graph VM and NIC queries succeeded");
         }
         catch (Exception ex)
         {
@@ -242,6 +248,7 @@ public class AzureConnector : AadConnectorBase
     public override async IAsyncEnumerable<DiscoveredAsset> DiscoverAsync(ConnectorSettings settings,
         SyncContext context, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        var subscriptions = AzureResourceGraph.ParseSubscriptionIds(settings);
         var token = await AcquireTokenAsync(settings, ArmScope, ct);
         var client = CreateClient();
         // Buffer VMs keyed by resource id (case-insensitive) so NIC rows can enrich them.
@@ -254,14 +261,14 @@ public class AzureConnector : AadConnectorBase
             | project id, name, computerName, os, vmId, location, subscriptionId, resourceGroup, tags";
 
         string? skipToken = null;
+        var observedSkipTokens = new HashSet<string>(StringComparer.Ordinal);
+        var page = 0;
         do
         {
+            if (++page > 10_000)
+                throw new InvalidOperationException("Azure Resource Graph pagination exceeded 10,000 pages.");
             await RateLimitAsync(context, ct);
-            var body = JsonSerializer.Serialize(new
-            {
-                query,
-                options = new { resultFormat = "objectArray", skipToken }
-            });
+            var body = AzureResourceGraph.BuildRequestBody(query, subscriptions, skipToken);
             using var response = await SendWithRetryAsync(client, () =>
             {
                 var request = new HttpRequestMessage(HttpMethod.Post,
@@ -274,7 +281,7 @@ public class AzureConnector : AadConnectorBase
             }, ct: ct);
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            skipToken = GetString(doc.RootElement, "$skipToken");
+            skipToken = AzureResourceGraph.GetNextPageToken(doc.RootElement, observedSkipTokens);
 
             if (doc.RootElement.TryGetProperty("data", out var data))
             {
@@ -311,75 +318,66 @@ public class AzureConnector : AadConnectorBase
             }
         } while (!string.IsNullOrEmpty(skipToken));
 
-        // Enrich VMs with NIC data (private IP, MAC, public-IP presence). Best-effort:
-        // partial network RBAC must not drop the VMs already discovered.
-        // Uses ipConfigurations[0] (proven to return rows) instead of mv-expand, which
-        // failed silently through the Resource Graph REST endpoint.
+        // Enrich VMs with every NIC/IP configuration. This remains best-effort so that
+        // missing Microsoft.Network read permission does not discard the VM inventory.
         const string nicQuery = @"Resources
             | where type =~ 'microsoft.network/networkinterfaces'
             | extend vmResourceId = tolower(tostring(properties.virtualMachine.id))
             | where isnotempty(vmResourceId)
             | project vmResourceId,
                       mac = tostring(properties.macAddress),
-                      privateIp = tostring(properties.ipConfigurations[0].properties.privateIPAddress),
-                      publicIpId = tostring(properties.ipConfigurations[0].properties.publicIPAddress.id)";
+                      isNicPrimary = tobool(properties.primary),
+                      ipConfigurations = properties.ipConfigurations";
         List<JsonElement> nics;
         try
         {
-            nics = await QueryAllAsync(token, nicQuery, context, ct);
+            nics = await QueryAllAsync(token, nicQuery, subscriptions, context, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Logger.LogWarning(ex, "Azure NIC enrichment failed — returning VMs without IP/MAC");
             nics = new List<JsonElement>();
         }
-        var matched = 0;
-        var added = 0;
-        if (nics.Count > 0)
-            Logger.LogInformation("Azure NIC sample raw row: {Row}", nics[0].GetRawText());
-        foreach (var nic in nics)
+        var observations = AzureResourceGraph.ParseNicObservations(nics);
+        IReadOnlyDictionary<string, string> publicIpAddresses = new Dictionary<string, string>();
+        if (observations.Any(observation => !string.IsNullOrWhiteSpace(observation.PublicIpResourceId)))
         {
-            var vmResourceId = GetString(nic, "vmResourceId");
-            if (vmResourceId is null || !assets.TryGetValue(vmResourceId, out var asset)) continue;
-            matched++;
-            var privateIp = GetString(nic, "privateIp");
-            var mac = GetString(nic, "mac");
-            if (!string.IsNullOrEmpty(privateIp) || !string.IsNullOrEmpty(mac))
+            const string publicIpQuery = @"Resources
+                | where type =~ 'microsoft.network/publicipaddresses'
+                | project id = tolower(id), publicIp = tostring(properties.ipAddress)";
+            try
             {
-                asset.Interfaces.Add(new DiscoveredInterface
-                {
-                    IpAddress = string.IsNullOrEmpty(privateIp) ? null : privateIp,
-                    MacAddress = string.IsNullOrEmpty(mac) ? null : mac,
-                    IsPrimary = asset.Interfaces.Count == 0
-                });
-                added++;
+                var publicIpRows = await QueryAllAsync(token, publicIpQuery, subscriptions, context, ct);
+                publicIpAddresses = AzureResourceGraph.ParsePublicIpAddresses(publicIpRows);
             }
-            if (!string.IsNullOrEmpty(GetString(nic, "publicIpId")))
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                asset.Tags["public_ip"] = "true";
-                asset.Tags["internet_facing"] = "true"; // consumed by the risk scoring engine
+                Logger.LogWarning(ex, "Azure public-IP enrichment failed; retaining public-IP presence only");
             }
         }
 
-        Logger.LogInformation("Azure NIC enrichment: {Matched} matched, {Added} interfaces added", matched, added);
+        var enrichment = AzureResourceGraph.EnrichVmAssets(assets, observations, publicIpAddresses);
+        Logger.LogInformation(
+            "Azure NIC enrichment: {MatchedVms} VMs matched, {InterfacesAdded} interfaces added, {PublicIpReferences} public-IP references",
+            enrichment.MatchedVms, enrichment.InterfacesAdded, enrichment.PublicIpReferences);
         foreach (var asset in assets.Values) yield return asset;
     }
 
     /// <summary>Runs a Resource Graph query and buffers every page into a list.</summary>
-    private async Task<List<JsonElement>> QueryAllAsync(string token, string query, SyncContext context,
-        CancellationToken ct)
+    private async Task<List<JsonElement>> QueryAllAsync(string token, string query,
+        IReadOnlyCollection<string> subscriptions, SyncContext context, CancellationToken ct)
     {
         var results = new List<JsonElement>();
         var client = CreateClient();
         string? skipToken = null;
+        var observedSkipTokens = new HashSet<string>(StringComparer.Ordinal);
+        var page = 0;
         do
         {
+            if (++page > 10_000)
+                throw new InvalidOperationException("Azure Resource Graph pagination exceeded 10,000 pages.");
             await RateLimitAsync(context, ct);
-            var body = JsonSerializer.Serialize(new
-            {
-                query,
-                options = new { resultFormat = "objectArray", skipToken }
-            });
+            var body = AzureResourceGraph.BuildRequestBody(query, subscriptions, skipToken);
             using var response = await SendWithRetryAsync(client, () =>
             {
                 var request = new HttpRequestMessage(HttpMethod.Post,
@@ -391,7 +389,7 @@ public class AzureConnector : AadConnectorBase
                 return request;
             }, ct: ct);
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            skipToken = GetString(doc.RootElement, "$skipToken");
+            skipToken = AzureResourceGraph.GetNextPageToken(doc.RootElement, observedSkipTokens);
             if (doc.RootElement.TryGetProperty("data", out var data))
                 foreach (var row in data.EnumerateArray())
                     results.Add(row.Clone());

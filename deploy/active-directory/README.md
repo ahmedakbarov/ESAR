@@ -11,6 +11,7 @@ same DNS, routing, and certificate trust configuration.
   EKU.
 - Use private routing only: allow TCP 636 from the ESAR VM/private subnet to the DC. Do **not**
   open TCP 389 or 636 to the Internet or a public Azure NSG.
+- When `resolveDns=true` is used, allow private UDP/TCP 53 from the ESAR VM to the AD DNS server.
 - Use a dedicated read-only AD service account. Its password is entered only in ESAR's UI and is
   encrypted at rest; never put it in `.env`, Compose files, Git, or command history.
 - The account needs read access to the configured Base DN. The first test should target a small
@@ -46,6 +47,19 @@ AD_DC_IP=172.16.0.4
 The `extra_hosts` fallback is applied to both containers. It is not needed when Docker can already
 resolve the DC name through VNet DNS.
 
+`extra_hosts` maps only the DC; it cannot resolve every computer in the AD domain. For AD DNS IP
+enrichment, prefer VNet DNS that resolves `*.esar.local`. For a temporary test environment where
+the DC is also the DNS server, add this private address to `.env` and use the DNS overlay:
+
+```dotenv
+AD_DNS_SERVER=172.16.0.4
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  -f docker-compose.ad-dns.yml --env-file .env config -q
+```
+
 ## Deploy without changing ESAR data
 
 The commands below rebuild only application images. They do not remove PostgreSQL, Redis,
@@ -57,8 +71,8 @@ git pull --ff-only origin main
 
 # Add -f docker-compose.ad-ldaps.yml only when the DC uses a private CA.
 # Add -f docker-compose.ad-hosts.yml only when VNet/AD DNS is not available.
-# This example assumes both optional overlays are needed; omit either -f line
-# when its corresponding prerequisite is already satisfied.
+# Add -f docker-compose.ad-dns.yml when AD endpoint DNS names need the private AD DNS server.
+# Omit each optional -f line when its corresponding prerequisite is already satisfied.
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   -f docker-compose.ad-ldaps.yml -f docker-compose.ad-hosts.yml \
   --env-file .env config -q
@@ -69,7 +83,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 ```
 
 If a public CA already signs the DC certificate, omit `docker-compose.ad-ldaps.yml`. If VNet/AD
-DNS already works, omit `docker-compose.ad-hosts.yml` and its two variables.
+DNS already works, omit `docker-compose.ad-hosts.yml` and its two variables. If `resolveDns=true`
+and the containers need the DC to resolve every AD computer hostname, add
+`-f docker-compose.ad-dns.yml` to both commands above and set `AD_DNS_SERVER`.
 
 ## Preflight and first connector test
 
@@ -106,10 +122,16 @@ password=<enter only in the UI>
 useSsl=true
 authType=Basic
 timeoutSeconds=30
+resolveDns=true
+dnsTimeoutSeconds=5
+dnsMaxConcurrency=8
 ```
 
 Run **Health check** first; it validates the bind and that the Base DN can be read without scanning
 the directory. If that succeeds, enable the connector briefly and run one **Full sync**. Keep its
-schedule disabled until that one job finishes successfully. AD discovery intentionally records
-computer objects and AD metadata; IP/MAC enrichment requires a separate network/DHCP/endpoint
-source.
+schedule disabled until that one job finishes successfully. With `resolveDns=true`, ESAR adds
+current A/AAAA DNS answers as IP-only evidence. IP-only evidence is always sent to matching
+review; it never auto-merges because IP addresses can be reassigned. AD does not expose a
+reliable, live MAC address for normal computer objects. Use `macAttributes` only for an
+environment-specific LDAP attribute that is known to contain an EUI-48 MAC, or use a separate
+DHCP/endpoint inventory collector for authoritative IP-to-MAC pairs.

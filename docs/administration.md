@@ -19,9 +19,9 @@ when you resubmit `***`):
 
 | Type | Settings |
 |---|---|
-| Azure | `tenantId`, `clientId`, `clientSecret` (Reader + Resource Graph) |
+| Azure | `tenantId`, `clientId`, `clientSecret`, optional `subscriptionIds` (Reader + Resource Graph; comma-separated IDs or a JSON array) |
 | EntraId / Intune / MicrosoftDefender | `tenantId`, `clientId`, `clientSecret` (Graph `Device.Read.All`, `DeviceManagementManagedDevices.Read.All`, Defender `Machine.Read.All`) |
-| ActiveDirectory | `server` (DC FQDN), `port=636`, `baseDn`, `username`, `password`, `useSsl=true`, `authType=Basic`, optional `timeoutSeconds` (5-300; default 30) |
+| ActiveDirectory | `server` (DC FQDN), `port=636`, `baseDn`, `username`, `password`, `useSsl=true`, `authType=Basic`, optional `timeoutSeconds` (5-300; default 30), `resolveDns`, `dnsTimeoutSeconds`, `dnsMaxConcurrency`, and `macAttributes` |
 | VmwareVCenter | `baseUrl`, `username`, `password` |
 | CrowdStrike | `baseUrl`, `clientId`, `clientSecret` |
 | SentinelOne | `baseUrl`, `apiToken` |
@@ -36,6 +36,12 @@ mode, retry count, rate limit/minute, health check button, execution history and
 `ConnectorFailure` incident and sends the `connector-failure` notification; the next success
 auto-resolves it.
 
+The Azure connector reads every NIC IP configuration and its MAC address, plus direct public-IP
+associations. Assign the service principal the built-in **Reader** role at each configured
+subscription (or a narrower scope containing both VMs and NICs). Network access is best-effort
+during a sync: VMs are retained if network enrichment is unavailable, but no IP/MAC values can be
+derived without permission to read `Microsoft.Network/networkInterfaces`.
+
 ### Active Directory / LDAPS
 
 The Docker deployment uses a service-account **simple bind over LDAPS only**. Use the DC's
@@ -46,12 +52,20 @@ private TCP 636, and trust its CA chain. Do not expose LDAP/LDAPS through a publ
 use plaintext port 389. See the [AD LDAPS deployment guide](../deploy/active-directory/README.md)
 for the optional private-CA and Docker-DNS overlays.
 
+Set `resolveDns=true` only when the worker can resolve AD computer FQDNs through private AD/VNet
+DNS. DNS replies become IP-only evidence and are never paired with LDAP MAC values. `macAttributes`
+is opt-in for a dedicated, textual LDAP attribute containing an EUI-48 MAC address; do not use
+`networkAddress`, `ipHostNumber`, or `netbootGUID`.
+
 ## 3. Matching administration
 
 - **Rules** (Matching page): adjust weights/order/enable — versioned, cached 5 minutes.
 - **Thresholds**: `matching.autoMergeThreshold` (default 0.85), `matching.reviewThreshold` (0.60).
 - **Review queue**: *Merge* applies the candidate to the matched asset; *New asset* creates a
   separate golden record. Every decision is audited with its explanation JSON.
+- **Network evidence**: IP addresses are soft evidence only. An IP-only candidate is always sent
+  to manual review because addresses can be reassigned; a matching MAC address or hostname can
+  still meet the normal auto-merge threshold.
 - **Simulation**: `POST /matching/simulate` with a candidate payload — no writes.
 - **Source priorities** (Settings page): lower number wins; attribute-level rows override globals.
 

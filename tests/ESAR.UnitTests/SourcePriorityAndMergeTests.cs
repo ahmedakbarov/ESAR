@@ -144,4 +144,55 @@ public class MergeEngineTests
         duplicate.IsDeleted.Should().BeTrue();
         duplicate.MergedIntoAssetId.Should().Be(survivor.Id);
     }
+
+    [Fact]
+    public async Task Same_source_interface_refresh_replaces_stale_mac_for_the_same_ip()
+    {
+        var asset = new Asset
+        {
+            IpAddresses =
+            {
+                new AssetIp
+                {
+                    IpAddress = "10.0.0.4",
+                    MacAddress = "00:11:22:33:44:55",
+                    Source = ConnectorType.Azure
+                }
+            }
+        };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-vm-1",
+            SeenAt = DateTime.UtcNow,
+            Interfaces =
+            {
+                new DiscoveredInterface
+                {
+                    IpAddress = "10.0.0.4",
+                    MacAddress = "00:aa:bb:cc:dd:ee",
+                    IsPrimary = true
+                }
+            }
+        };
+
+        await _sut.ApplyAsync(asset, incoming);
+
+        asset.IpAddresses.Should().ContainSingle();
+        asset.IpAddresses.Single().MacAddress.Should().Be("00:aa:bb:cc:dd:ee");
+        asset.IpAddresses.Single().IsPrimary.Should().BeTrue();
+        asset.IpAddresses.Single().LastSeen.Should().Be(incoming.SeenAt);
+    }
+
+    [Fact]
+    public async Task Same_source_primary_interface_refresh_demotes_the_previous_primary()
+    {
+        var asset = new Asset { IpAddresses = { new AssetIp { IpAddress = "10.0.0.4", Source = ConnectorType.Azure, IsPrimary = true }, new AssetIp { IpAddress = "10.0.0.5", Source = ConnectorType.Azure, IsPrimary = false } } };
+        var incoming = new DiscoveredAsset { Source = ConnectorType.Azure, ExternalId = "azure-vm-1", Interfaces = { new DiscoveredInterface { IpAddress = "10.0.0.5", IsPrimary = true }, new DiscoveredInterface { IpAddress = "10.0.0.4", IsPrimary = false } } };
+
+        await _sut.ApplyAsync(asset, incoming);
+
+        asset.IpAddresses.Should().ContainSingle(networkInterface => networkInterface.IpAddress == "10.0.0.5" && networkInterface.IsPrimary);
+        asset.IpAddresses.Should().ContainSingle(networkInterface => networkInterface.IpAddress == "10.0.0.4" && !networkInterface.IsPrimary);
+    }
 }
