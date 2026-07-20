@@ -313,15 +313,16 @@ public class AzureConnector : AadConnectorBase
 
         // Enrich VMs with NIC data (private IP, MAC, public-IP presence). Best-effort:
         // partial network RBAC must not drop the VMs already discovered.
+        // Uses ipConfigurations[0] (proven to return rows) instead of mv-expand, which
+        // failed silently through the Resource Graph REST endpoint.
         const string nicQuery = @"Resources
             | where type =~ 'microsoft.network/networkinterfaces'
-            | extend vmResourceId = tolower(tostring(properties.virtualMachine.id)),
-                     mac = tostring(properties.macAddress)
+            | extend vmResourceId = tolower(tostring(properties.virtualMachine.id))
             | where isnotempty(vmResourceId)
-            | mv-expand ipconfig = properties.ipConfigurations
-            | extend privateIp = tostring(ipconfig.properties.privateIPAddress),
-                     publicIpId = tostring(ipconfig.properties.publicIPAddress.id)
-            | project vmResourceId, mac, privateIp, publicIpId";
+            | project vmResourceId,
+                      mac = tostring(properties.macAddress),
+                      privateIp = tostring(properties.ipConfigurations[0].properties.privateIPAddress),
+                      publicIpId = tostring(properties.ipConfigurations[0].properties.publicIPAddress.id)";
         List<JsonElement> nics;
         try
         {
