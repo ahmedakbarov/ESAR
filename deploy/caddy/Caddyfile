@@ -1,0 +1,20 @@
+{$CADDY_SITE_ADDRESS} {
+    encode zstd gzip
+
+    # Keep headers deliberately compatible with the existing React SPA. A
+    # restrictive Content-Security-Policy can be added later after auditing
+    # third-party resources used by the portal.
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), geolocation=(), microphone=()"
+    }
+
+    # Caddy preserves the request Host and automatically supplies
+    # X-Forwarded-For, X-Forwarded-Proto, and X-Forwarded-Host.
+    @api path /api /api/* /swagger /swagger/*
+    reverse_proxy @api esar-api:8080
+    reverse_proxy esar-web:80
+}

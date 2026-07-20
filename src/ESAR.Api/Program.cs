@@ -9,6 +9,7 @@ using Esar.Infrastructure;
 using Esar.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
@@ -156,6 +157,22 @@ builder.Services.AddCors(o => o.AddPolicy("portal", p => p
     .AllowAnyHeader()
     .AllowAnyMethod()));
 
+// The production Compose overlay keeps the API private and places Caddy in
+// front of it. Only in that topology is it safe to accept forwarded headers
+// from the Docker network rather than a fixed proxy IP.
+var trustForwardedHeaders = builder.Configuration.GetValue("ReverseProxy:TrustForwardedHeaders", false);
+if (trustForwardedHeaders)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+            | ForwardedHeaders.XForwardedProto
+            | ForwardedHeaders.XForwardedHost;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+}
+
 // ---------- Health checks ----------
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<EsarDbContext>("postgres");
@@ -163,6 +180,9 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 // ---------- Pipeline ----------
+if (trustForwardedHeaders)
+    app.UseForwardedHeaders();
+
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (!app.Environment.IsDevelopment())

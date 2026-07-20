@@ -1,0 +1,45 @@
+services:
+  # The base Compose file intentionally exposes development ports. The
+  # production overlay removes every inherited host mapping, so Caddy is the
+  # only Internet-facing container.
+  postgres:
+    ports: !override []
+
+  redis:
+    ports: !override []
+
+  rabbitmq:
+    ports: !override []
+
+  esar-api:
+    ports: !override []
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ReverseProxy__TrustForwardedHeaders: "true"
+
+  esar-web:
+    ports: !override []
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      # A DNS name enables automatic HTTPS. Without one, Caddy serves HTTP on
+      # port 80 only, which is useful for local/private test deployments.
+      CADDY_SITE_ADDRESS: "${ESAR_DOMAIN:-:80}"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      esar-api:
+        condition: service_healthy
+      esar-web:
+        condition: service_started
+
+volumes:
+  caddy-data:
+  caddy-config:
