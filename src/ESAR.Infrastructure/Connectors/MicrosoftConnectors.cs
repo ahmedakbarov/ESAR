@@ -320,6 +320,8 @@ public class AzureConnector : AadConnectorBase
 
         // Enrich VMs with every NIC/IP configuration. This remains best-effort so that
         // missing Microsoft.Network read permission does not discard the VM inventory.
+        // The scalar primary-* fields keep IP enrichment working when Resource Graph
+        // serializes the dynamic ipConfigurations value as a string instead of an array.
         const string nicQuery = @"Resources
             | where type =~ 'microsoft.network/networkinterfaces'
             | extend vmResourceId = tolower(tostring(properties.virtualMachine.id))
@@ -327,7 +329,9 @@ public class AzureConnector : AadConnectorBase
             | project vmResourceId,
                       mac = tostring(properties.macAddress),
                       isNicPrimary = tobool(properties.primary),
-                      ipConfigurations = properties.ipConfigurations";
+                      ipConfigurations = properties.ipConfigurations,
+                      primaryPrivateIp = tostring(properties.ipConfigurations[0].properties.privateIPAddress),
+                      primaryPublicIpResourceId = tolower(tostring(properties.ipConfigurations[0].properties.publicIPAddress.id))";
         List<JsonElement> nics;
         try
         {

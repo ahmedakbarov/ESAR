@@ -129,6 +129,63 @@ public class AzureResourceGraphTests
     }
 
     [Fact]
+    public void ParseNicObservations_reads_dynamic_configurations_serialized_as_a_json_string()
+    {
+        using var nicDocument = JsonDocument.Parse("""
+            [
+              {
+                "vmResourceId": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm01",
+                "mac": "00-11-22-33-44-55",
+                "isNicPrimary": true,
+                "ipConfigurations": "[{\"properties\":{\"privateIPAddress\":\"10.0.0.4\",\"primary\":true}}]"
+              }
+            ]
+            """);
+
+        var observations = AzureResourceGraph.ParseNicObservations(nicDocument.RootElement.EnumerateArray());
+
+        observations.Should().ContainSingle();
+        observations[0].PrivateIpAddress.Should().Be("10.0.0.4");
+        observations[0].MacAddress.Should().Be("00-11-22-33-44-55");
+        observations[0].IsPrimary.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ParseNicObservations_uses_primary_scalar_fallback_when_dynamic_configurations_are_unavailable()
+    {
+        using var nicDocument = JsonDocument.Parse("""
+            [
+              {
+                "vmResourceId": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm01",
+                "mac": "00-11-22-33-44-55",
+                "isNicPrimary": true,
+                "primaryPrivateIp": "10.0.0.4",
+                "primaryPublicIpResourceId": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/publicIPAddresses/pip01"
+              }
+            ]
+            """);
+
+        var observations = AzureResourceGraph.ParseNicObservations(nicDocument.RootElement.EnumerateArray());
+
+        observations.Should().ContainSingle();
+        observations[0].PrivateIpAddress.Should().Be("10.0.0.4");
+        observations[0].MacAddress.Should().Be("00-11-22-33-44-55");
+        observations[0].PublicIpResourceId.Should().Contain("publicIPAddresses/pip01");
+
+        var asset = new DiscoveredAsset();
+        var assets = new Dictionary<string, DiscoveredAsset>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm01"] = asset
+        };
+
+        AzureResourceGraph.EnrichVmAssets(assets, observations, new Dictionary<string, string>());
+
+        asset.Interfaces.Should().ContainSingle(interfaceValue => interfaceValue.IpAddress == "10.0.0.4");
+        asset.Tags["public_ip"].Should().Be("true");
+        asset.Tags["internet_facing"].Should().Be("true");
+    }
+
+    [Fact]
     public void ParseSubscriptionIds_rejects_invalid_values()
     {
         var settings = new ConnectorSettings

@@ -89,17 +89,23 @@ internal static class AzureResourceGraph
 
             var mac = GetString(nic, "mac");
             var nicIsPrimary = GetBoolean(nic, "isNicPrimary") == true;
-            if (!nic.TryGetProperty("ipConfigurations", out var configurations) ||
-                configurations.ValueKind != JsonValueKind.Array)
+            var configurations = GetIpConfigurations(nic);
+            if (configurations is null || configurations.Count == 0)
             {
-                if (!string.IsNullOrWhiteSpace(mac))
-                    observations.Add(new AzureNicObservation(vmResourceId, mac, null, nicIsPrimary, null));
+                // ARG's REST response has historically returned dynamic values in
+                // different shapes. The scalar fields are deliberately projected by
+                // the connector as a compatibility fallback for the primary config.
+                var privateIp = GetString(nic, "primaryPrivateIp") ?? GetString(nic, "privateIp");
+                var publicIpId = GetString(nic, "primaryPublicIpResourceId") ?? GetString(nic, "publicIpId");
+                if (!string.IsNullOrWhiteSpace(privateIp) || !string.IsNullOrWhiteSpace(mac) ||
+                    !string.IsNullOrWhiteSpace(publicIpId))
+                    observations.Add(new AzureNicObservation(vmResourceId, mac, privateIp, nicIsPrimary, publicIpId));
                 continue;
             }
 
             var foundConfiguration = false;
             var configurationIndex = 0;
-            foreach (var configuration in configurations.EnumerateArray())
+            foreach (var configuration in configurations)
             {
                 foundConfiguration = true;
                 var privateIp = GetString(configuration, "properties", "privateIPAddress");
@@ -236,5 +242,31 @@ internal static class AzureResourceGraph
     {
         var value = GetString(element, path);
         return bool.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static IReadOnlyList<JsonElement>? GetIpConfigurations(JsonElement nic)
+    {
+        if (!nic.TryGetProperty("ipConfigurations", out var configurations)) return null;
+
+        if (configurations.ValueKind == JsonValueKind.Array)
+            return configurations.EnumerateArray().Select(configuration => configuration.Clone()).ToArray();
+
+        // Resource Graph's objectArray response can serialize a dynamic field as a
+        // JSON string. Clone the values before disposing the temporary document.
+        if (configurations.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(configurations.GetString()))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(configurations.GetString()!);
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                ? document.RootElement.EnumerateArray().Select(configuration => configuration.Clone()).ToArray()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
