@@ -89,6 +89,9 @@ public class ConnectorRunner : IConnectorRunner
                         discovered.ExternalId, config.Name);
                     if (job.AssetsFailed <= 20)
                         logLines.Add($"{DateTime.UtcNow:O} ingest error {discovered.ExternalId}: {ex.Message}");
+                    // A failed SaveChanges leaves broken entries in the shared tracker; drop them
+                    // so this one asset cannot poison every subsequent asset in the run.
+                    _uow.ClearChangeTracker();
                 }
             }
 
@@ -127,9 +130,22 @@ public class ConnectorRunner : IConnectorRunner
             job.Log = JsonSerializer.Serialize(logLines);
             config.LastRunAt = DateTime.UtcNow;
             config.LastRunStatus = job.Status;
-            _uow.ConnectorJobs.Update(job);
-            _uow.Connectors.Update(config);
-            await _uow.SaveChangesAsync(CancellationToken.None);
+            try
+            {
+                _uow.ConnectorJobs.Update(job);
+                _uow.Connectors.Update(config);
+                await _uow.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (Exception saveEx)
+            {
+                // The job row MUST be finalized or the connector never leaves Running.
+                // Retry once on a clean tracker holding only the two bookkeeping rows.
+                _logger.LogError(saveEx, "Finalizing job {JobId} failed; retrying on a clean tracker", job.Id);
+                _uow.ClearChangeTracker();
+                _uow.ConnectorJobs.Update(job);
+                _uow.Connectors.Update(config);
+                await _uow.SaveChangesAsync(CancellationToken.None);
+            }
             await _events.PublishAsync(EventTopics.ConnectorJobCompleted, new
             {
                 ConnectorId = config.Id,
