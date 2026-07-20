@@ -244,12 +244,14 @@ public class AzureConnector : AadConnectorBase
     {
         var token = await AcquireTokenAsync(settings, ArmScope, ct);
         var client = CreateClient();
+        // Buffer VMs keyed by resource id (case-insensitive) so NIC rows can enrich them.
+        var assets = new Dictionary<string, DiscoveredAsset>(StringComparer.OrdinalIgnoreCase);
         const string query = @"Resources
             | where type in~ ('microsoft.compute/virtualmachines','microsoft.hybridcompute/machines')
             | extend os = tostring(properties.storageProfile.osDisk.osType),
                      vmId = tostring(properties.vmId),
                      computerName = tostring(properties.osProfile.computerName)
-            | project id, name, computerName, os, vmId, location, subscriptionId, tags, properties";
+            | project id, name, computerName, os, vmId, location, subscriptionId, resourceGroup, tags";
 
         string? skipToken = null;
         do
@@ -295,6 +297,8 @@ public class AzureConnector : AadConnectorBase
                     asset.Identifiers[MatchAttributes.AzureResourceId] = resourceId;
                     if (GetString(resource, "vmId") is { } vmId)
                         asset.Identifiers[MatchAttributes.BiosUuid] = vmId;
+                    if (GetString(resource, "resourceGroup") is { } resourceGroup)
+                        asset.Tags["azure_resource_group"] = resourceGroup;
                     if (resource.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object)
                     {
                         foreach (var tag in tags.EnumerateObject())
@@ -302,9 +306,86 @@ public class AzureConnector : AadConnectorBase
                                 ? tag.Value.GetString() ?? string.Empty
                                 : tag.Value.GetRawText();
                     }
-                    yield return asset;
+                    assets[resourceId] = asset;
                 }
             }
         } while (!string.IsNullOrEmpty(skipToken));
+
+        // Enrich VMs with NIC data (private IP, MAC, public-IP presence). Best-effort:
+        // partial network RBAC must not drop the VMs already discovered.
+        const string nicQuery = @"Resources
+            | where type =~ 'microsoft.network/networkinterfaces'
+            | extend vmResourceId = tolower(tostring(properties.virtualMachine.id)),
+                     mac = tostring(properties.macAddress)
+            | where isnotempty(vmResourceId)
+            | mv-expand ipconfig = properties.ipConfigurations
+            | extend privateIp = tostring(ipconfig.properties.privateIPAddress),
+                     publicIpId = tostring(ipconfig.properties.publicIPAddress.id)
+            | project vmResourceId, mac, privateIp, publicIpId";
+        List<JsonElement> nics;
+        try
+        {
+            nics = await QueryAllAsync(token, nicQuery, context, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Azure NIC enrichment failed — returning VMs without IP/MAC");
+            nics = new List<JsonElement>();
+        }
+        foreach (var nic in nics)
+        {
+            var vmResourceId = GetString(nic, "vmResourceId");
+            if (vmResourceId is null || !assets.TryGetValue(vmResourceId, out var asset)) continue;
+            var privateIp = GetString(nic, "privateIp");
+            var mac = GetString(nic, "mac");
+            if (!string.IsNullOrEmpty(privateIp) || !string.IsNullOrEmpty(mac))
+                asset.Interfaces.Add(new DiscoveredInterface
+                {
+                    IpAddress = string.IsNullOrEmpty(privateIp) ? null : privateIp,
+                    MacAddress = string.IsNullOrEmpty(mac) ? null : mac,
+                    IsPrimary = asset.Interfaces.Count == 0
+                });
+            if (!string.IsNullOrEmpty(GetString(nic, "publicIpId")))
+            {
+                asset.Tags["public_ip"] = "true";
+                asset.Tags["internet_facing"] = "true"; // consumed by the risk scoring engine
+            }
+        }
+
+        foreach (var asset in assets.Values) yield return asset;
+    }
+
+    /// <summary>Runs a Resource Graph query and buffers every page into a list.</summary>
+    private async Task<List<JsonElement>> QueryAllAsync(string token, string query, SyncContext context,
+        CancellationToken ct)
+    {
+        var results = new List<JsonElement>();
+        var client = CreateClient();
+        string? skipToken = null;
+        do
+        {
+            await RateLimitAsync(context, ct);
+            var body = JsonSerializer.Serialize(new
+            {
+                query,
+                options = new { resultFormat = "objectArray", skipToken }
+            });
+            using var response = await SendWithRetryAsync(client, () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post,
+                    "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2021-03-01")
+                {
+                    Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+                };
+                request.Headers.Authorization = new("Bearer", token);
+                return request;
+            }, ct: ct);
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            skipToken = GetString(doc.RootElement, "$skipToken");
+            if (doc.RootElement.TryGetProperty("data", out var data))
+                foreach (var row in data.EnumerateArray())
+                    results.Add(row.Clone());
+        } while (!string.IsNullOrEmpty(skipToken));
+        return results;
     }
 }
