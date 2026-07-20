@@ -21,7 +21,7 @@ when you resubmit `***`):
 |---|---|
 | Azure | `tenantId`, `clientId`, `clientSecret` (Reader + Resource Graph) |
 | EntraId / Intune / MicrosoftDefender | `tenantId`, `clientId`, `clientSecret` (Graph `Device.Read.All`, `DeviceManagementManagedDevices.Read.All`, Defender `Machine.Read.All`) |
-| ActiveDirectory | `server`, `port`, `baseDn`, `username`, `password`, `useSsl` |
+| ActiveDirectory | `server` (DC FQDN), `port=636`, `baseDn`, `username`, `password`, `useSsl=true`, `authType=Basic`, optional `timeoutSeconds` (5-300; default 30) |
 | VmwareVCenter | `baseUrl`, `username`, `password` |
 | CrowdStrike | `baseUrl`, `clientId`, `clientSecret` |
 | SentinelOne | `baseUrl`, `apiToken` |
@@ -35,6 +35,16 @@ mode, retry count, rate limit/minute, health check button, execution history and
 `/connectors/{id}/metrics` (success rate, throughput, durations). A failed run opens a
 `ConnectorFailure` incident and sends the `connector-failure` notification; the next success
 auto-resolves it.
+
+### Active Directory / LDAPS
+
+The Docker deployment uses a service-account **simple bind over LDAPS only**. Use the DC's
+certificate FQDN (not its raw IP unless the certificate has an IP SAN), `useSsl=true`,
+`port=636`, and `authType=Basic`. The service account needs read access to the chosen Base DN.
+Both the API (health check) and worker (sync) containers must resolve that FQDN, reach the DC on
+private TCP 636, and trust its CA chain. Do not expose LDAP/LDAPS through a public Azure NSG or
+use plaintext port 389. See the [AD LDAPS deployment guide](../deploy/active-directory/README.md)
+for the optional private-CA and Docker-DNS overlays.
 
 ## 3. Matching administration
 

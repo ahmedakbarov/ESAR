@@ -28,6 +28,13 @@ function parseSettings(text: string): Record<string, string> {
   return result;
 }
 
+function settingsPlaceholder(type: string): string {
+  if (type === 'ActiveDirectory') {
+    return 'server=dc01.esar.local\\nport=636\\nbaseDn=DC=esar,DC=local\\nusername=svc_esar_ad@esar.local\\npassword=...\\nuseSsl=true\\nauthType=Basic\\ntimeoutSeconds=30';
+  }
+  return 'tenantId=...\\nclientId=...\\nclientSecret=...';
+}
+
 export default function Connectors() {
   const [connectors, setConnectors] = useState<any[]>([]);
   const [types, setTypes] = useState<string[]>([]);
@@ -117,9 +124,13 @@ export default function Connectors() {
                 onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Enabled
             </label>
           </div>
-          <h3>Settings (key=value per line; secrets are encrypted at rest, keep *** to preserve)</h3>
-          <textarea rows={5} style={{ width: '100%', fontFamily: 'monospace' }}
-            placeholder={'tenantId=...\nclientId=...\nclientSecret=...'}
+          <h3>
+            {form.type === 'ActiveDirectory'
+              ? 'Active Directory: use the DC FQDN, LDAPS port 636, and a read-only UPN or bind DN. Keep *** to preserve an existing encrypted password.'
+              : 'Settings (key=value per line; secrets are encrypted at rest, keep *** to preserve)'}
+          </h3>
+          <textarea rows={form.type === 'ActiveDirectory' ? 9 : 5} style={{ width: '100%', fontFamily: 'monospace' }}
+            placeholder={settingsPlaceholder(form.type)}
             value={form.settingsText}
             onChange={(e) => setForm({ ...form, settingsText: e.target.value })} />
           {error && <div className="error" style={{ margin: '8px 0' }}>{error}</div>}

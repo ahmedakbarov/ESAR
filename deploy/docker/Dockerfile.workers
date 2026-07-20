@@ -13,7 +13,9 @@ RUN dotnet publish src/ESAR.Workers/ESAR.Workers.csproj -c Release -o /app/publi
 # ---- runtime ----
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
-RUN groupadd -g 10001 esar && useradd -u 10001 -g esar -s /usr/sbin/nologin esar \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libldap-2.5-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 10001 esar && useradd -u 10001 -g esar -s /usr/sbin/nologin esar \
     && mkdir -p /data/reports /app/logs && chown -R esar:esar /data /app
 COPY --from=build /app/publish .
 USER esar

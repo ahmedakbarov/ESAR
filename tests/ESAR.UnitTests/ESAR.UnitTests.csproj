@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ESAR.Application\ESAR.Application.csproj" />
+    <ProjectReference Include="..\..\src\ESAR.Infrastructure\ESAR.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

@@ -10,7 +10,7 @@ namespace Esar.Infrastructure.Connectors;
 
 /// <summary>
 /// Discovers computer objects from on-premises Active Directory over LDAP(S).
-/// Settings: server, port (636), baseDn, username, password, useSsl (true/false).
+/// Settings: server, port (636), baseDn, username, password, useSsl=true, authType=Basic.
 /// </summary>
 public class ActiveDirectoryConnector : IConnector
 {
@@ -25,17 +25,44 @@ public class ActiveDirectoryConnector : IConnector
 
     public ConnectorType Type => ConnectorType.ActiveDirectory;
 
-    public Task<ConnectorHealth> CheckHealthAsync(ConnectorSettings settings, CancellationToken ct = default)
+    public async Task<ConnectorHealth> CheckHealthAsync(ConnectorSettings settings, CancellationToken ct = default)
     {
         try
         {
-            using var connection = Connect(settings);
-            connection.Bind();
-            return Task.FromResult(new ConnectorHealth(true, "LDAP bind succeeded"));
+            var options = ActiveDirectoryConnectionOptions.Parse(settings);
+            await Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                using var connection = Connect(options);
+                connection.Bind();
+                var request = new SearchRequest(options.BaseDn, "(objectClass=*)",
+                    SearchScope.Base, "distinguishedName");
+                var response = (SearchResponse)connection.SendRequest(request);
+                if (response.ResultCode != ResultCode.Success)
+                    throw new InvalidOperationException($"LDAP Base DN check returned {response.ResultCode}.");
+            }, ct);
+
+            return new ConnectorHealth(true, "LDAPS bind and search succeeded");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new ConnectorHealth(false, ex.Message);
+        }
+        catch (LdapException ex)
+        {
+            _logger.LogWarning(ex, "Active Directory health check failed for {Server}", settings.GetOptional("server"));
+            return new ConnectorHealth(false,
+                $"LDAP health check failed (LDAP error {ex.ErrorCode}). Verify the LDAPS certificate, credentials, Base DN, and private network path.");
         }
         catch (Exception ex)
         {
-            return Task.FromResult(new ConnectorHealth(false, ex.Message));
+            _logger.LogWarning(ex, "Active Directory health check failed for {Server}", settings.GetOptional("server"));
+            return new ConnectorHealth(false,
+                "LDAP health check failed. Verify the LDAPS certificate, credentials, Base DN, and private network path.");
         }
     }
 
@@ -43,7 +70,8 @@ public class ActiveDirectoryConnector : IConnector
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         // LDAP library is synchronous — run paged search on a worker thread and stream results.
-        var results = await Task.Run(() => Search(settings, ct), ct);
+        var options = ActiveDirectoryConnectionOptions.Parse(settings);
+        var results = await Task.Run(() => Search(options, ct), ct);
         foreach (var asset in results)
         {
             ct.ThrowIfCancellationRequested();
@@ -51,14 +79,14 @@ public class ActiveDirectoryConnector : IConnector
         }
     }
 
-    private List<DiscoveredAsset> Search(ConnectorSettings settings, CancellationToken ct)
+    private List<DiscoveredAsset> Search(ActiveDirectoryConnectionOptions options, CancellationToken ct)
     {
-        var baseDn = settings.Get("baseDn");
+        var baseDn = options.BaseDn;
         var domain = string.Join('.', baseDn.Split(',')
             .Where(p => p.Trim().StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
             .Select(p => p.Trim()[3..]));
 
-        using var connection = Connect(settings);
+        using var connection = Connect(options);
         connection.Bind();
 
         var assets = new List<DiscoveredAsset>();
@@ -92,15 +120,13 @@ public class ActiveDirectoryConnector : IConnector
                     {
                         distinguishedName = GetValue(entry, "distinguishedName"),
                         description = GetValue(entry, "description"),
+                        adLastLogonTimestamp = GetValue(entry, "lastLogonTimestamp"),
+                        whenCreated = GetValue(entry, "whenCreated"),
                         disabled
                     })
                 };
                 asset.Identifiers[MatchAttributes.ObjectGuid] = objectGuid;
                 if (disabled) asset.Tags["ad_disabled"] = "true";
-
-                var lastLogon = GetValue(entry, "lastLogonTimestamp");
-                if (lastLogon is not null && long.TryParse(lastLogon, out var fileTime) && fileTime > 0)
-                    asset.SeenAt = DateTime.FromFileTimeUtc(fileTime);
 
                 assets.Add(asset);
             }
@@ -114,21 +140,24 @@ public class ActiveDirectoryConnector : IConnector
         return assets;
     }
 
-    private static LdapConnection Connect(ConnectorSettings settings)
+    private static LdapConnection Connect(ActiveDirectoryConnectionOptions options)
     {
-        var useSsl = !string.Equals(settings.GetOptional("useSsl"), "false", StringComparison.OrdinalIgnoreCase);
-        var port = settings.GetInt("port", useSsl ? 636 : 389);
-        var identifier = new LdapDirectoryIdentifier(settings.Get("server"), port);
-        var credential = new NetworkCredential(settings.Get("username"), settings.Get("password"));
-        var connection = new LdapConnection(identifier, credential, AuthType.Negotiate)
+        var identifier = new LdapDirectoryIdentifier(options.Server, options.Port);
+        var credential = new NetworkCredential(options.Username, options.Password);
+        var connection = new LdapConnection(identifier, credential, options.AuthType)
         {
-            Timeout = TimeSpan.FromMinutes(2)
+            Timeout = options.Timeout
         };
         connection.SessionOptions.ProtocolVersion = 3;
-        if (useSsl) connection.SessionOptions.SecureSocketLayer = true;
+        connection.SessionOptions.SecureSocketLayer = options.UseSsl;
+        connection.SessionOptions.ReferralChasing = ReferralChasingOptions.None;
         return connection;
     }
 
     private static string? GetValue(SearchResultEntry entry, string attribute)
-        => entry.Attributes.Contains(attribute) ? entry.Attributes[attribute][0]?.ToString() : null;
+    {
+        if (!entry.Attributes.Contains(attribute)) return null;
+        var values = entry.Attributes[attribute].GetValues(typeof(string));
+        return values.Length > 0 ? values[0] as string : null;
+    }
 }

@@ -1,0 +1,23 @@
+# Optional overlay for an AD LDAPS certificate chain issued by a private CA.
+# Use only with docker-compose.yml + docker-compose.prod.yml. The CA bundle is
+# mounted read-only into both the health-check API and discovery worker.
+services:
+  esar-api:
+    environment:
+      LDAPTLS_CACERT: /run/esar/ad-ldaps/ca-bundle.pem
+      LDAPTLS_REQCERT: demand
+    volumes:
+      - type: bind
+        source: ${AD_LDAPS_CA_FILE:?Set AD_LDAPS_CA_FILE to the absolute path of a PEM CA bundle}
+        target: /run/esar/ad-ldaps/ca-bundle.pem
+        read_only: true
+
+  esar-workers:
+    environment:
+      LDAPTLS_CACERT: /run/esar/ad-ldaps/ca-bundle.pem
+      LDAPTLS_REQCERT: demand
+    volumes:
+      - type: bind
+        source: ${AD_LDAPS_CA_FILE:?Set AD_LDAPS_CA_FILE to the absolute path of a PEM CA bundle}
+        target: /run/esar/ad-ldaps/ca-bundle.pem
+        read_only: true

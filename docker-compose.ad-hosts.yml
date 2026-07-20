@@ -1,0 +1,10 @@
+# Optional test-only Docker DNS fallback. Prefer Azure VNet DNS backed by AD DNS.
+# The FQDN must exactly match a DNS name in the DC's LDAPS certificate.
+services:
+  esar-api:
+    extra_hosts:
+      - "${AD_DC_FQDN:?Set AD_DC_FQDN to the DC certificate FQDN}:${AD_DC_IP:?Set AD_DC_IP to the DC private IP}"
+
+  esar-workers:
+    extra_hosts:
+      - "${AD_DC_FQDN:?Set AD_DC_FQDN to the DC certificate FQDN}:${AD_DC_IP:?Set AD_DC_IP to the DC private IP}"
