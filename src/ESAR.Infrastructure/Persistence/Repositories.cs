@@ -269,7 +269,31 @@ public class UnitOfWork : IUnitOfWork
     public IRepository<Report> Reports { get; }
     public IRepository<Setting> Settings { get; }
 
-    public Task<int> SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
+    public async Task<int> SaveChangesAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            return await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // A freshly created child (client-generated GUID key — AssetIp/AssetTag/AssetSource/
+            // AssetHistory) can get mis-tracked as Modified, so its UPDATE affects 0 rows and the
+            // whole asset save fails. The failed entries are exactly the phantom-new rows: re-mark
+            // them as Added and retry once so the insert goes through.
+            var repromoted = false;
+            foreach (var entry in ex.Entries)
+            {
+                if (entry.State == EntityState.Modified)
+                {
+                    entry.State = EntityState.Added;
+                    repromoted = true;
+                }
+            }
+            if (!repromoted) throw;
+            return await _db.SaveChangesAsync(ct);
+        }
+    }
 
     public void ClearChangeTracker() => _db.ChangeTracker.Clear();
 }
