@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: esar
       POSTGRES_USER: esar
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-esar_dev_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
@@ -34,7 +34,7 @@ services:
     image: rabbitmq:3.13-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: esar
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-esar_dev_password}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     ports:
@@ -52,14 +52,14 @@ services:
       dockerfile: deploy/docker/Dockerfile.api
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=esar;Username=esar;Password=${POSTGRES_PASSWORD:-esar_dev_password}
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=esar;Username=esar;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       ConnectionStrings__Redis: redis:6379
       RabbitMq__Host: rabbitmq
       RabbitMq__Username: esar
-      RabbitMq__Password: ${RABBITMQ_PASSWORD:-esar_dev_password}
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:-dev-only-signing-key-change-me-32chars!}
-      Security__EncryptionKey: ${ENCRYPTION_KEY:-3q2+7wCLpZFYuJfW9kQxOEnRVhTGdMbA1sYeUiPcK5o=}
-      ESAR_ADMIN_INITIAL_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe-Admin-2024!}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}
+      Security__EncryptionKey: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
+      ESAR_ADMIN_INITIAL_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       Database__AutoMigrate: "true"
     volumes:
       - reports-data:/data/reports
@@ -79,12 +79,12 @@ services:
       dockerfile: deploy/docker/Dockerfile.workers
     environment:
       DOTNET_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=esar;Username=esar;Password=${POSTGRES_PASSWORD:-esar_dev_password}
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=esar;Username=esar;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       ConnectionStrings__Redis: redis:6379
       RabbitMq__Host: rabbitmq
       RabbitMq__Username: esar
-      RabbitMq__Password: ${RABBITMQ_PASSWORD:-esar_dev_password}
-      Security__EncryptionKey: ${ENCRYPTION_KEY:-3q2+7wCLpZFYuJfW9kQxOEnRVhTGdMbA1sYeUiPcK5o=}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
+      Security__EncryptionKey: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
       Database__AutoMigrate: "false"
     volumes:
       - reports-data:/data/reports
