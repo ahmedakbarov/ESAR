@@ -36,6 +36,19 @@ public class ExceptionHandlingMiddleware
                 errors = ex.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
             }));
         }
+        catch (ArgumentException ex)
+        {
+            // Bad user input (e.g. an over-long regex search) → clean 400, not a 500.
+            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+            context.Response.ContentType = "application/problem+json";
+            await context.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+                title = "Invalid request",
+                status = 400,
+                detail = ex.Message
+            }));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);

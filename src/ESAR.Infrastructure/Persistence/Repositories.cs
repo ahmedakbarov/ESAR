@@ -77,6 +77,12 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             {
                 // Npgsql translates Regex.IsMatch to the PostgreSQL ~ operator.
                 var pattern = c.Search.Trim();
+                // ReDoS guard: PostgreSQL's regex engine can backtrack catastrophically on
+                // hostile patterns (e.g. "(a+)+$"). Cap the pattern length and bound the query
+                // with a short command timeout so a malicious search cannot pin a DB core.
+                if (pattern.Length > 200)
+                    throw new ArgumentException("Regex pattern is too long (max 200 characters).");
+                Db.Database.SetCommandTimeout(TimeSpan.FromSeconds(5));
                 query = query.Where(a =>
                     Regex.IsMatch(a.Hostname, pattern) ||
                     (a.Fqdn != null && Regex.IsMatch(a.Fqdn, pattern)));
