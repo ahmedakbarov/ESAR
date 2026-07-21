@@ -1,6 +1,44 @@
 import { FormEvent, useEffect, useState } from 'react';
 import client from '../api/client';
-import { Badge, formatDate } from '../components/Ui';
+import { Badge, formatDate, Modal } from '../components/Ui';
+
+function ResetPasswordModal({ user, onClose, onDone }: {
+  user: { id: string; username: string }; onClose: () => void; onDone: () => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setError('');
+    if (password.length < 12) { setError('Password must be at least 12 characters'); return; }
+    setBusy(true);
+    try {
+      await client.put(`/users/${user.id}`, { newPassword: password });
+      onDone();
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Failed to reset password');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Reset password — ${user.username}`} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <p className="muted" style={{ margin: 0 }}>
+          Sets a new password for this user. Share it over a secure channel; they should change it after signing in.
+        </p>
+        <input type="password" placeholder="New password (12+ chars)" value={password}
+          autoComplete="new-password" minLength={12} onChange={(e) => setPassword(e.target.value)} />
+        {error && <div className="error">{error}</div>}
+        <div>
+          <button disabled={busy || !password} onClick={submit}>{busy ? 'Saving…' : 'Reset password'}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export default function Users() {
   const [users, setUsers] = useState<any[]>([]);
@@ -8,6 +46,8 @@ export default function Users() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ username: '', email: '', displayName: '', password: '', role: 'Viewer' });
   const [error, setError] = useState('');
+  const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null);
+  const [notice, setNotice] = useState('');
 
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
@@ -35,6 +75,7 @@ export default function Users() {
           <h3>Users</h3>
           <button onClick={() => setShowForm(!showForm)}>{showForm ? 'Cancel' : 'New user'}</button>
         </div>
+        {notice && <div className="muted" style={{ marginBottom: 10 }}>{notice}</div>}
         {showForm && (
           <form onSubmit={create} className="filters" style={{ marginBottom: 16 }}>
             <input placeholder="Username" value={form.username}
@@ -55,7 +96,7 @@ export default function Users() {
         <table className="data">
           <thead>
             <tr><th>Username</th><th>Display Name</th><th>Email</th><th>Provider</th>
-              <th>Roles</th><th>Active</th><th>Last Login</th></tr>
+              <th>Roles</th><th>Active</th><th>Last Login</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {users.map((u) => (
@@ -67,6 +108,11 @@ export default function Users() {
                 <td>{u.roles.map((r: string) => <span key={r} className="badge blue" style={{ marginRight: 4 }}>{r}</span>)}</td>
                 <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
                 <td className="muted">{formatDate(u.lastLoginAt)}</td>
+                <td>
+                  {u.provider === 'Local'
+                    ? <button className="secondary" onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>Reset password</button>
+                    : <span className="muted" style={{ fontSize: 12 }}>managed by {u.provider}</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -88,6 +134,14 @@ export default function Users() {
           </tbody>
         </table>
       </div>
+
+      {resetUser && (
+        <ResetPasswordModal
+          user={resetUser}
+          onClose={() => setResetUser(null)}
+          onDone={() => { setNotice(`Password reset for ${resetUser.username}.`); setResetUser(null); load(); }}
+        />
+      )}
     </>
   );
 }

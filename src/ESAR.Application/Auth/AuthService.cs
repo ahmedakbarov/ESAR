@@ -9,15 +9,20 @@ namespace Esar.Application.Auth;
 public interface IAuthService
 {
     Task<LoginResult> LoginAsync(string username, string password, CancellationToken ct = default);
+    Task<ChangePasswordResult> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword,
+        CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetPermissionsAsync(Guid userId, CancellationToken ct = default);
 }
 
 public record LoginResult(bool Success, string? Token, DateTime? ExpiresAt, string? Error,
     string? DisplayName = null, IReadOnlyList<string>? Roles = null);
 
+public record ChangePasswordResult(bool Success, string? Error);
+
 public class AuthService : IAuthService
 {
     private const int MaxFailedAttempts = 5;
+    private const int MinPasswordLength = 12;
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
 
     private readonly IUnitOfWork _uow;
@@ -72,6 +77,39 @@ public class AuthService : IAuthService
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.Login, nameof(User), user.Id.ToString(), new { user.Username }, ct);
         return new LoginResult(true, token, expires, null, user.DisplayName, roles);
+    }
+
+    public async Task<ChangePasswordResult> ChangePasswordAsync(Guid userId, string currentPassword,
+        string newPassword, CancellationToken ct = default)
+    {
+        var user = await _uow.Users.GetByIdAsync(userId, ct);
+        if (user is null || !user.IsActive)
+            return new ChangePasswordResult(false, "User not found");
+
+        // Only local accounts have a password here; federated (Entra ID/LDAP) accounts
+        // are managed by their upstream identity provider.
+        if (user.AuthProvider != AuthProvider.Local || user.PasswordHash is null)
+            return new ChangePasswordResult(false, "Password changes are only available for local accounts");
+
+        if (!_hasher.Verify(currentPassword, user.PasswordHash))
+            return new ChangePasswordResult(false, "Current password is incorrect");
+
+        if (newPassword.Length < MinPasswordLength)
+            return new ChangePasswordResult(false, $"Password must be at least {MinPasswordLength} characters");
+
+        if (_hasher.Verify(newPassword, user.PasswordHash))
+            return new ChangePasswordResult(false, "New password must be different from the current password");
+
+        user.PasswordHash = _hasher.Hash(newPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        // A successful password change clears any prior lockout/failure state.
+        user.FailedLoginAttempts = 0;
+        user.LockedOutUntil = null;
+        _uow.Users.Update(user);
+        await _uow.SaveChangesAsync(ct);
+        await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(),
+            new { action = "password_changed" }, ct);
+        return new ChangePasswordResult(true, null);
     }
 
     public async Task<IReadOnlyList<string>> GetPermissionsAsync(Guid userId, CancellationToken ct = default)

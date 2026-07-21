@@ -1,4 +1,5 @@
 using Asp.Versioning;
+using Esar.Application.Abstractions;
 using Esar.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -12,7 +13,13 @@ namespace Esar.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _auth;
-    public AuthController(IAuthService auth) => _auth = auth;
+    private readonly ICurrentUserService _currentUser;
+
+    public AuthController(IAuthService auth, ICurrentUserService currentUser)
+    {
+        _auth = auth;
+        _currentUser = currentUser;
+    }
 
     public record LoginRequest(string Username, string Password);
 
@@ -45,5 +52,22 @@ public class AuthController : ControllerBase
             roles = User.Claims.Where(c => c.Type == System.Security.Claims.ClaimTypes.Role).Select(c => c.Value),
             permissions = User.Claims.Where(c => c.Type == "permission").Select(c => c.Value)
         });
+    }
+
+    public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+    /// <summary>Lets the authenticated user change their own password (local accounts only).</summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
+    {
+        if (_currentUser.UserId is not { } userId)
+            return Unauthorized();
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword) || string.IsNullOrWhiteSpace(request.NewPassword))
+            return BadRequest(new { error = "Current and new password are required." });
+
+        var result = await _auth.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
+        if (!result.Success) return BadRequest(new { error = result.Error });
+        return NoContent();
     }
 }
