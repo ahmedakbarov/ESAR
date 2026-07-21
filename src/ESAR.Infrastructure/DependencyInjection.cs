@@ -89,6 +89,7 @@ public static class DependencyInjection
         services.AddScoped<IConnector, VmwareVCenterConnector>();
         services.AddScoped<IConnector, CrowdStrikeConnector>();
         services.AddScoped<IConnector, SentinelOneConnector>();
+        services.AddScoped<IConnector, CortexXdrConnector>();
         services.AddScoped<IConnector, TenableConnector>();
         services.AddScoped<IConnector, QualysConnector>();
         services.AddScoped<IConnector, ServiceNowCmdbConnector>();
