@@ -14,3 +14,6 @@ appsettings.Local.json
 esar-azure-deployment.json
 deploy/active-directory/*.pem
 deploy/active-directory/*.crt
+deploy/certs/*.pem
+deploy/certs/*.crt
+!deploy/certs/.gitkeep

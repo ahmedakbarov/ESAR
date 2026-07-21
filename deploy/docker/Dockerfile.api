@@ -16,6 +16,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libldap-2.5-0 && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 esar && useradd -u 10001 -g esar -s /usr/sbin/nologin esar \
     && mkdir -p /data/reports /app/logs && chown -R esar:esar /data /app
+# Trust operator-supplied CA certificates (e.g. an internal AD LDAPS CA). Runs as
+# root at build time so the non-root runtime user inherits the trust. Place PEM/CRT
+# files (named *.crt) under deploy/certs/ in the build context; the folder may be
+# empty (.gitkeep) for builds that do not need a private CA.
+COPY deploy/certs/ /usr/local/share/ca-certificates/esar/
+RUN update-ca-certificates
 COPY --from=build /app/publish .
 USER esar
 ENV ASPNETCORE_URLS=http://+:8080

@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 esar && useradd -u 10001 -g esar -s /usr/sbin/nologin esar \
     && mkdir -p /data/reports /app/logs && chown -R esar:esar /data /app
+# Trust operator-supplied CA certificates (e.g. an internal AD LDAPS CA); see
+# Dockerfile.api. The AD connector's discovery runs here, so this image must also
+# trust the LDAPS CA. Place *.crt files under deploy/certs/ in the build context.
+COPY deploy/certs/ /usr/local/share/ca-certificates/esar/
+RUN update-ca-certificates
 COPY --from=build /app/publish .
 USER esar
 ENTRYPOINT ["dotnet", "ESAR.Workers.dll"]
