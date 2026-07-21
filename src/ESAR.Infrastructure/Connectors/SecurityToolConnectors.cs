@@ -199,6 +199,130 @@ public class SentinelOneConnector : RestConnectorBase
     }
 }
 
+/// <summary>
+/// Palo Alto Cortex XDR connector. Standard auth.
+/// Settings: baseUrl (https://api-&lt;tenant&gt;.xdr.&lt;region&gt;.paloaltonetworks.com), apiKey, apiKeyId.
+/// </summary>
+public class CortexXdrConnector : RestConnectorBase
+{
+    private const int PageSize = 100; // Cortex XDR caps get_endpoint at 100 per request.
+
+    public CortexXdrConnector(IHttpClientFactory httpFactory, ILogger<CortexXdrConnector> logger)
+        : base(httpFactory, logger) { }
+
+    public override ConnectorType Type => ConnectorType.CortexXdr;
+
+    public override async Task<ConnectorHealth> CheckHealthAsync(ConnectorSettings settings, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await SendWithRetryAsync(CreateClient(),
+                () => BuildRequest(settings, 0, 1), ct: ct);
+            return new ConnectorHealth(true, "Cortex XDR API reachable");
+        }
+        catch (Exception ex)
+        {
+            return new ConnectorHealth(false, ex.Message);
+        }
+    }
+
+    public override async IAsyncEnumerable<DiscoveredAsset> DiscoverAsync(ConnectorSettings settings,
+        SyncContext context, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var client = CreateClient();
+        var from = 0;
+        while (true)
+        {
+            await RateLimitAsync(context, ct);
+            using var response = await SendWithRetryAsync(client,
+                () => BuildRequest(settings, from, from + PageSize), ct: ct);
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("reply", out var reply) ||
+                !reply.TryGetProperty("endpoints", out var endpoints) ||
+                endpoints.ValueKind != JsonValueKind.Array)
+                yield break;
+
+            var count = 0;
+            foreach (var ep in endpoints.EnumerateArray())
+            {
+                count++;
+                var asset = new DiscoveredAsset
+                {
+                    Source = ConnectorType.CortexXdr,
+                    ExternalId = GetString(ep, "endpoint_id") ?? string.Empty,
+                    Hostname = GetString(ep, "endpoint_name"),
+                    Domain = GetString(ep, "domain"),
+                    OperatingSystem = MapOs(GetString(ep, "os_type"), GetString(ep, "os_version")),
+                    RawJson = ep.GetRawText()
+                };
+                if (string.IsNullOrEmpty(asset.ExternalId)) continue;
+                asset.Identifiers[MatchAttributes.EndpointId] = asset.ExternalId;
+                asset.Tags["antivirus"] = "true";
+
+                var ips = ReadStringArray(ep, "ip");
+                var macs = ReadStringArray(ep, "mac_address");
+                for (var i = 0; i < Math.Max(ips.Count, macs.Count); i++)
+                    asset.Interfaces.Add(new DiscoveredInterface
+                    {
+                        IpAddress = i < ips.Count ? ips[i] : null,
+                        MacAddress = i < macs.Count ? macs[i] : null,
+                        IsPrimary = i == 0
+                    });
+
+                if (ReadStringArray(ep, "public_ip").Count > 0)
+                {
+                    asset.Tags["public_ip"] = "true";
+                    asset.Tags["internet_facing"] = "true";
+                }
+                if (ep.TryGetProperty("last_seen", out var lastSeen) && lastSeen.ValueKind == JsonValueKind.Number)
+                    asset.SeenAt = DateTimeOffset.FromUnixTimeMilliseconds(lastSeen.GetInt64()).UtcDateTime;
+
+                yield return asset;
+            }
+            if (count < PageSize) yield break;
+            from += PageSize;
+        }
+    }
+
+    private static HttpRequestMessage BuildRequest(ConnectorSettings settings, int from, int to)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            request_data = new { search_from = from, search_to = to, filters = Array.Empty<object>() }
+        });
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            $"{settings.Get("baseUrl").TrimEnd('/')}/public_api/v1/endpoints/get_endpoint/")
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("x-xdr-auth-id", settings.Get("apiKeyId"));
+        request.Headers.Add("Authorization", settings.Get("apiKey"));
+        return request;
+    }
+
+    private static string? MapOs(string? osType, string? osVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(osVersion)) return osVersion;
+        return osType switch
+        {
+            "AGENT_OS_WINDOWS" => "Windows",
+            "AGENT_OS_LINUX" => "Linux",
+            "AGENT_OS_MAC" => "macOS",
+            _ => osType
+        };
+    }
+
+    private static List<string> ReadStringArray(JsonElement element, string property)
+    {
+        var result = new List<string>();
+        if (element.TryGetProperty(property, out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var item in arr.EnumerateArray())
+                if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } value)
+                    result.Add(value);
+        return result;
+    }
+}
+
 /// <summary>Tenable Vulnerability Management connector. Settings: accessKey, secretKey.</summary>
 public class TenableConnector : RestConnectorBase
 {
