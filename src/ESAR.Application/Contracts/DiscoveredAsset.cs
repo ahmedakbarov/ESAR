@@ -74,6 +74,7 @@ public class DiscoveredSoftware
 /// <summary>Well-known matching identifier names, in default hard-match priority order.</summary>
 public static class MatchAttributes
 {
+    public const string AzureAdNetworkIdentity = "AzureAdNetworkIdentity";
     public const string AzureResourceId = "AzureResourceId";
     public const string AwsInstanceId = "AwsInstanceId";
     public const string VmwareUuid = "VmwareUuid";

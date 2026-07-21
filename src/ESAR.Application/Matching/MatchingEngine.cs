@@ -121,7 +121,60 @@ public class MatchingEngine : IMatchingEngine
             bestExplanations.Where(e => e.Matched).All(e =>
                 string.Equals(e.Attribute, MatchAttributes.IpAddress, StringComparison.OrdinalIgnoreCase));
 
-        result.Decision = hasIpOnlyPositiveEvidence ? MatchDecision.QueuedForReview
+        var azureAdCounterpart = candidate.Source == ConnectorType.Azure
+            ? best.Sources.Any(source => source.ConnectorType == ConnectorType.ActiveDirectory)
+            : candidate.Source == ConnectorType.ActiveDirectory &&
+                best.Sources.Any(source => source.ConnectorType == ConnectorType.Azure);
+        var hostnameMatches = bestExplanations.Any(e => e.Matched &&
+            string.Equals(e.Attribute, MatchAttributes.Hostname, StringComparison.OrdinalIgnoreCase));
+        var ipMatches = bestExplanations.Any(e => e.Matched &&
+            string.Equals(e.Attribute, MatchAttributes.IpAddress, StringComparison.OrdinalIgnoreCase));
+        var macMatches = bestExplanations.Any(e => e.Matched &&
+            string.Equals(e.Attribute, MatchAttributes.MacAddress, StringComparison.OrdinalIgnoreCase));
+        var candidateHasMac = macs.Count > 0;
+        var candidateMacs = macs.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingMacs = best.IpAddresses.Where(networkInterface => !string.IsNullOrWhiteSpace(networkInterface.MacAddress))
+            .Select(networkInterface => networkInterface.MacAddress!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var macConflict = candidateHasMac && existingMacs.Count > 0 && !candidateMacs.Overlaps(existingMacs);
+        var hasStrongAzureAdNetworkIdentity = hostnameMatches &&
+            (macMatches || (ipMatches && !macConflict));
+
+        // AD DNS and LDAP observations are not guaranteed to be one NIC record. Restrict
+        // Azure-to-AD auto-merges to a matching hostname plus IP or MAC evidence. All weaker
+        // or contradictory combinations stay in the existing analyst review workflow.
+        if (azureAdCounterpart && best.Status == AssetStatus.Decommissioned)
+        {
+            result.Decision = MatchDecision.QueuedForReview;
+            result.Explanations.Add(new MatchExplanation(
+                "Azure-AD network correlation policy",
+                MatchAttributes.AzureAdNetworkIdentity,
+                $"hostname={hostnameMatches}; ip={ipMatches}; mac={macMatches}",
+                "counterpart asset is decommissioned",
+                1m, 0m, false));
+        }
+        else if (azureAdCounterpart && !hasStrongAzureAdNetworkIdentity)
+        {
+            result.Decision = MatchDecision.QueuedForReview;
+            result.Explanations.Add(new MatchExplanation(
+                "Azure-AD network correlation policy",
+                MatchAttributes.AzureAdNetworkIdentity,
+                $"hostname={hostnameMatches}; ip={ipMatches}; mac={macMatches}",
+                macConflict ? "conflicting MAC observations" : "hostname plus IP or MAC is required",
+                1m, 0m, false));
+        }
+        else if (azureAdCounterpart && hasStrongAzureAdNetworkIdentity)
+        {
+            result.Decision = MatchDecision.AutoMerged;
+            result.ConfidenceScore = Math.Max(result.ConfidenceScore, 0.95m);
+            result.Explanations.Add(new MatchExplanation(
+                "Azure-AD network correlation policy",
+                MatchAttributes.AzureAdNetworkIdentity,
+                $"hostname={hostnameMatches}; ip={ipMatches}; mac={macMatches}",
+                "hostname plus IP or MAC matched",
+                1m, 1m, true));
+        }
+        else result.Decision = hasIpOnlyPositiveEvidence ? MatchDecision.QueuedForReview
             : bestScore >= options.AutoMergeThreshold ? MatchDecision.AutoMerged
             : bestScore >= options.ReviewThreshold ? MatchDecision.QueuedForReview
             : MatchDecision.NewAsset;
