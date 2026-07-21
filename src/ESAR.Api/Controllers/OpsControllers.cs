@@ -76,18 +76,21 @@ public class IncidentsController : ControllerBase
     public async Task<IActionResult> List([FromQuery] string? status, [FromQuery] string? severity,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
     {
-        var incidents = await _uow.Incidents.ListAsync(null, ct);
-        var filtered = incidents.AsEnumerable();
-        if (Enum.TryParse<IncidentStatus>(status, true, out var st)) filtered = filtered.Where(i => i.Status == st);
-        if (Enum.TryParse<IncidentSeverity>(severity, true, out var sev)) filtered = filtered.Where(i => i.Severity == sev);
-        var ordered = filtered.OrderByDescending(i => i.CreatedAt).ToList();
+        var hasStatus = Enum.TryParse<IncidentStatus>(status, true, out var st);
+        var hasSeverity = Enum.TryParse<IncidentSeverity>(severity, true, out var sev);
         pageSize = Math.Clamp(pageSize, 1, 200);
+        var result = await _uow.Incidents.PageAsync(q =>
+        {
+            if (hasStatus) q = q.Where(i => i.Status == st);
+            if (hasSeverity) q = q.Where(i => i.Severity == sev);
+            return q.OrderByDescending(i => i.CreatedAt);
+        }, page, pageSize, ct);
         return Ok(new
         {
-            totalCount = ordered.Count,
-            page,
-            pageSize,
-            items = ordered.Skip((Math.Max(1, page) - 1) * pageSize).Take(pageSize).Select(ToDto)
+            totalCount = result.TotalCount,
+            page = result.Page,
+            pageSize = result.PageSize,
+            items = result.Items.Select(ToDto)
         });
     }
 
@@ -238,13 +241,13 @@ public class NotificationsController : ControllerBase
     [Authorize("notifications.manage")]
     public async Task<IActionResult> List([FromQuery] int limit = 100, CancellationToken ct = default)
     {
-        var notifications = await _uow.Notifications.ListAsync(null, ct);
-        return Ok(notifications.OrderByDescending(n => n.CreatedAt).Take(Math.Clamp(limit, 1, 500))
-            .Select(n => new
-            {
-                n.Id, Channel = n.Channel.ToString(), n.Recipient, n.Subject,
-                Status = n.Status.ToString(), n.SentAt, n.RetryCount, n.Error, n.CreatedAt
-            }));
+        var result = await _uow.Notifications.PageAsync(
+            q => q.OrderByDescending(n => n.CreatedAt), 1, Math.Clamp(limit, 1, 500), ct);
+        return Ok(result.Items.Select(n => new
+        {
+            n.Id, Channel = n.Channel.ToString(), n.Recipient, n.Subject,
+            Status = n.Status.ToString(), n.SentAt, n.RetryCount, n.Error, n.CreatedAt
+        }));
     }
 
     [HttpGet("templates")]

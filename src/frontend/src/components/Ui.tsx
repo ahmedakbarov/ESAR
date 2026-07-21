@@ -44,3 +44,26 @@ export function formatDate(value?: string) {
   if (!value) return '—';
   return new Date(value).toLocaleString();
 }
+
+export function Modal({ title, onClose, children }: {
+  title: string; onClose: () => void; children: ReactNode;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 200,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} className="card"
+        style={{ minWidth: 340, maxWidth: 460, width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3>{title}</h3>
+          <button className="secondary" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
