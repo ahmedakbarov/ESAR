@@ -206,21 +206,26 @@ public class AuditController : ControllerBase
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 100, CancellationToken ct = default)
     {
-        var logs = await _uow.AuditLogs.ListAsync(l =>
-            (from == null || l.Timestamp >= from) && (to == null || l.Timestamp <= to), ct);
-        var filtered = logs.AsEnumerable();
-        if (Enum.TryParse<AuditAction>(action, true, out var act)) filtered = filtered.Where(l => l.Action == act);
-        if (!string.IsNullOrWhiteSpace(user)) filtered = filtered.Where(l =>
-            l.UserName.Contains(user, StringComparison.OrdinalIgnoreCase));
-
-        var ordered = filtered.OrderByDescending(l => l.Timestamp).ToList();
+        var hasAction = Enum.TryParse<AuditAction>(action, true, out var act);
         pageSize = Math.Clamp(pageSize, 1, 500);
+        var result = await _uow.AuditLogs.PageAsync(q =>
+        {
+            if (from != null) q = q.Where(l => l.Timestamp >= from);
+            if (to != null) q = q.Where(l => l.Timestamp <= to);
+            if (hasAction) q = q.Where(l => l.Action == act);
+            if (!string.IsNullOrWhiteSpace(user))
+            {
+                var term = user.ToLower();
+                q = q.Where(l => l.UserName.ToLower().Contains(term));
+            }
+            return q.OrderByDescending(l => l.Timestamp);
+        }, page, pageSize, ct);
         return Ok(new
         {
-            totalCount = ordered.Count,
-            page,
-            pageSize,
-            items = ordered.Skip((Math.Max(1, page) - 1) * pageSize).Take(pageSize).Select(l => new
+            totalCount = result.TotalCount,
+            page = result.Page,
+            pageSize = result.PageSize,
+            items = result.Items.Select(l => new
             {
                 l.Id, l.UserName, Action = l.Action.ToString(), l.EntityType, l.EntityId,
                 l.Details, l.IpAddress, l.Timestamp

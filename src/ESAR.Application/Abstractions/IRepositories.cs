@@ -11,6 +11,13 @@ public interface IRepository<T> where T : class
     Task<List<T>> ListAsync(Expression<Func<T, bool>>? predicate = null, CancellationToken ct = default);
     Task<T?> FirstOrDefaultAsync(Expression<Func<T, bool>> predicate, CancellationToken ct = default);
     Task<int> CountAsync(Expression<Func<T, bool>>? predicate = null, CancellationToken ct = default);
+    /// <summary>
+    /// Database-side paged query. <paramref name="shape"/> applies filtering and ordering to the
+    /// underlying <see cref="IQueryable{T}"/> (ordering is required for deterministic paging).
+    /// The count and Skip/Take run in SQL, so the whole table is never materialized in memory.
+    /// </summary>
+    Task<PagedResult<T>> PageAsync(Func<IQueryable<T>, IQueryable<T>>? shape,
+        int page, int pageSize, CancellationToken ct = default);
     Task AddAsync(T entity, CancellationToken ct = default);
     Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default);
     void Update(T entity);

@@ -26,6 +26,18 @@ public class GenericRepository<T> : IRepository<T> where T : class
     public Task<int> CountAsync(Expression<Func<T, bool>>? predicate = null, CancellationToken ct = default)
         => predicate is null ? Db.Set<T>().CountAsync(ct) : Db.Set<T>().CountAsync(predicate, ct);
 
+    public async Task<PagedResult<T>> PageAsync(Func<IQueryable<T>, IQueryable<T>>? shape,
+        int page, int pageSize, CancellationToken ct = default)
+    {
+        IQueryable<T> query = Db.Set<T>().AsNoTracking();
+        if (shape is not null) query = shape(query);
+        var total = await query.LongCountAsync(ct);
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 500);
+        var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return new PagedResult<T> { Items = items, Page = page, PageSize = pageSize, TotalCount = total };
+    }
+
     public async Task AddAsync(T entity, CancellationToken ct = default) => await Db.Set<T>().AddAsync(entity, ct);
     public async Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default)
         => await Db.Set<T>().AddRangeAsync(entities, ct);
