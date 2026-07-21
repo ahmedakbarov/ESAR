@@ -85,9 +85,9 @@ public static class DbSeeder
         var initialPassword = Environment.GetEnvironmentVariable("ESAR_ADMIN_INITIAL_PASSWORD");
         if (string.IsNullOrWhiteSpace(initialPassword))
         {
-            initialPassword = Guid.NewGuid().ToString("N")[..16] + "!A1";
-            logger.LogWarning("ESAR_ADMIN_INITIAL_PASSWORD not set. Generated admin password: {Password} " +
-                              "— change it immediately after first login.", initialPassword);
+            // Fail fast rather than generating and logging a plaintext admin password.
+            throw new InvalidOperationException(
+                "ESAR_ADMIN_INITIAL_PASSWORD must be set to seed the initial admin account.");
         }
 
         var admin = new User

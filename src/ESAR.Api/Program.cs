@@ -190,12 +190,17 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
     app.UseHttpsRedirection();
 }
-app.UseSwagger();
-app.UseSwaggerUI(o =>
+// Swagger exposes the full API surface — restrict to development, or opt in
+// per-environment with Swagger:Enabled=true. Off in production by default.
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue("Swagger:Enabled", false))
 {
-    o.SwaggerEndpoint("/swagger/v1/swagger.json", "ESAR API v1");
-    o.RoutePrefix = "swagger";
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(o =>
+    {
+        o.SwaggerEndpoint("/swagger/v1/swagger.json", "ESAR API v1");
+        o.RoutePrefix = "swagger";
+    });
+}
 app.UseCors("portal");
 app.UseRateLimiter();
 app.UseAuthentication();
