@@ -34,7 +34,7 @@ Startup order is handled by health checks — the API initializes the schema, wo
 
 ```bash
 # 1. Provision PostgreSQL, Redis, RabbitMQ (managed or in-cluster).
-# 2. Create the schema: db/001_schema.sql, db/002_seed.sql, db/003_v2_features.sql
+# 2. Create the schema (in order): db/001_schema.sql, db/002_seed.sql, db/003_v2_features.sql, db/004_reconcile.sql
 # 3. Deploy:
 helm upgrade --install esar deploy/helm/esar -n esar --create-namespace \
   --set image.registry=ghcr.io/your-org \
