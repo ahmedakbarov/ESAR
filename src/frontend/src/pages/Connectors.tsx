@@ -86,6 +86,22 @@ export default function Connectors() {
     try { await client.post(`/connectors/${id}/health-check`); } finally { setBusy(null); load(); }
   };
 
+  const remove = async (id: string, name: string) => {
+    if (!window.confirm(`Delete connector "${name}"? Its configuration and run history are removed. This cannot be undone.`)) return;
+    setError('');
+    setBusy(id);
+    try {
+      await client.delete(`/connectors/${id}`);
+      if (expanded === id) setExpanded(null);
+      if (form?.id === id) setForm(null);
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Delete failed');
+    } finally {
+      setBusy(null);
+      load();
+    }
+  };
+
   const toggleJobs = async (id: string) => {
     if (expanded === id) { setExpanded(null); return; }
     const { data } = await client.get(`/connectors/${id}/jobs?limit=10`);
@@ -178,8 +194,11 @@ export default function Connectors() {
                     rateLimitPerMinute: c.rateLimitPerMinute, defaultSyncMode: c.defaultSyncMode,
                     settingsText: Object.entries(c.settings ?? {})
                       .map(([k, v]) => `${k}=${v}`).join('\n'),
-                  })}>
+                  })} style={{ marginRight: 6 }}>
                     Edit
+                  </button>
+                  <button className="danger" disabled={busy === c.id} onClick={() => remove(c.id, c.name)}>
+                    Delete
                   </button>
                 </td>
               </tr>
