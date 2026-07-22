@@ -88,7 +88,7 @@ public class CreateAssetHandler : IRequestHandler<CreateAssetCommand, AssetDto>
 // ---------- Update ----------
 public record UpdateAssetCommand(Guid Id, string? OwnerName, string? OwnerEmail, string? Department,
     string? BusinessUnit, string? Location, string? Classification, string? Environment, string? Criticality,
-    string? LifecycleStatus, string? Status) : IRequest<AssetDto?>;
+    string? LifecycleStatus, string? Status, bool? PolicyExempt = null) : IRequest<AssetDto?>;
 
 public class UpdateAssetHandler : IRequestHandler<UpdateAssetCommand, AssetDto?>
 {
@@ -151,6 +151,17 @@ public class UpdateAssetHandler : IRequestHandler<UpdateAssetCommand, AssetDto?>
         {
             Track(nameof(asset.Status), asset.Status.ToString(), st.ToString());
             asset.Status = st;
+        }
+        if (request.PolicyExempt is { } exempt && exempt != asset.PolicyExempt)
+        {
+            Track(nameof(asset.PolicyExempt), asset.PolicyExempt.ToString(), exempt.ToString());
+            asset.PolicyExempt = exempt;
+            if (exempt)
+            {
+                asset.ComplianceRecords.Clear();
+                asset.ComplianceScore = 0;
+                asset.ComplianceStatus = ComplianceStatus.Unknown;
+            }
         }
 
         asset.UpdatedAt = DateTime.UtcNow;

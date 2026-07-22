@@ -52,7 +52,8 @@ public class ComplianceJobs
     [AutomaticRetry(Attempts = 2)]
     public async Task EvaluateAllAsync(CancellationToken ct)
     {
-        var assetIds = (await _uow.Assets.ListAsync(a => !a.IsDeleted && a.Status == AssetStatus.Active, ct))
+        var assetIds = (await _uow.Assets.ListAsync(
+                a => !a.IsDeleted && a.Status == AssetStatus.Active && !a.PolicyExempt, ct))
             .Select(a => a.Id).ToList();
         _logger.LogInformation("Compliance evaluation starting for {Count} assets", assetIds.Count);
 

@@ -43,6 +43,20 @@ public class ComplianceEngine : IComplianceEngine
 
     public async Task<ComplianceStatus> EvaluateAsync(Asset asset, CancellationToken ct = default)
     {
+        // Operator-set exception: skip evaluation entirely rather than let a NonCompliant/Compliant
+        // verdict sit next to a policy the asset was deliberately excluded from. Mirrors the reset
+        // UpdateAssetHandler applies the moment the flag is toggled on, so a later manual
+        // "re-evaluate" click (or a sweep that somehow still reaches this asset) can't silently
+        // undo it by recomputing a real score.
+        if (asset.PolicyExempt)
+        {
+            asset.ComplianceRecords.Clear();
+            asset.ComplianceScore = 0;
+            asset.ComplianceStatus = ComplianceStatus.Unknown;
+            _uow.Assets.Update(asset);
+            return asset.ComplianceStatus;
+        }
+
         var plan = await _policies.GetPlanAsync(asset, ct);
         var maxAgeDays = await GetEvidenceMaxAgeDaysAsync(ct);
         var evidenceCutoff = DateTime.UtcNow.AddDays(-maxAgeDays);

@@ -24,6 +24,7 @@ public class AssetDto
     public string? CloudRegion { get; set; }
     public decimal ComplianceScore { get; set; }
     public string ComplianceStatus { get; set; } = string.Empty;
+    public bool PolicyExempt { get; set; }
     public int HealthScore { get; set; }
     public decimal DataQualityScore { get; set; }
     public DateTime FirstSeen { get; set; }
@@ -53,6 +54,7 @@ public class AssetDto
         CloudRegion = a.CloudRegion,
         ComplianceScore = a.ComplianceScore,
         ComplianceStatus = a.ComplianceStatus.ToString(),
+        PolicyExempt = a.PolicyExempt,
         HealthScore = a.HealthScore,
         DataQualityScore = a.DataQualityScore,
         FirstSeen = a.FirstSeen,

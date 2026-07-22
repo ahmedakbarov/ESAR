@@ -43,6 +43,7 @@ export interface AssetDto {
   businessUnit?: string;
   complianceScore: number;
   complianceStatus: string;
+  policyExempt: boolean;
   firstSeen: string;
   lastSeen: string;
   primaryIp?: string;

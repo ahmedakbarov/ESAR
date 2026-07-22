@@ -55,6 +55,9 @@ public class Asset : AuditableEntity
     public bool IsDeleted { get; set; }
     /// <summary>When this record was merged into another golden record.</summary>
     public Guid? MergedIntoAssetId { get; set; }
+    /// <summary>When true, ComplianceEngine skips evaluation entirely (score/status reset to
+    /// Unknown) — an explicit, visible exception, distinct from a policy simply not matching.</summary>
+    public bool PolicyExempt { get; set; }
 
     /// <summary>
     /// Per-attribute provenance map (jsonb): attribute name -> connector that currently
