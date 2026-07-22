@@ -31,6 +31,7 @@ public class AssetSearchCriteria
     public string? TagKey { get; set; }
     public string? TagValue { get; set; }
     public decimal? MaxDataQualityScore { get; set; }
+    public bool? PolicyExempt { get; set; }
     public bool IncludeDeleted { get; set; }
     public string SortBy { get; set; } = "hostname";
     public bool SortDescending { get; set; }
