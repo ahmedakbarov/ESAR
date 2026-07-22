@@ -8,6 +8,12 @@ const ASSET_TYPES = ['', 'WindowsServer', 'LinuxServer', 'VirtualMachine', 'Phys
   'Switch', 'Router', 'Database', 'Application', 'StorageSystem'];
 const ENVIRONMENTS = ['', 'Production', 'Staging', 'Test', 'Development', 'DisasterRecovery'];
 const COMPLIANCE = ['', 'Compliant', 'NonCompliant', 'Pending', 'Unknown'];
+const CRITICALITIES = ['', 'Low', 'Medium', 'High', 'Critical'];
+const STATUSES = ['', 'Active', 'Inactive', 'Offline', 'Quarantined', 'Decommissioned'];
+const CONNECTORS = ['', 'Azure', 'EntraId', 'ActiveDirectory', 'Aws', 'GoogleCloud', 'VmwareVCenter', 'HyperV',
+  'MicrosoftDefender', 'CortexXdr', 'CrowdStrike', 'SentinelOne', 'Qualys', 'Rapid7', 'Tenable', 'Nessus',
+  'MicrosoftSentinel', 'QRadar', 'Splunk', 'Elastic', 'ServiceNowCmdb', 'Jira', 'Dns', 'Dhcp', 'Sccm', 'Intune',
+  'GenericRest', 'ManualImport'];
 
 export default function Assets() {
   const [result, setResult] = useState<PagedResult<AssetDto> | null>(null);
@@ -15,6 +21,13 @@ export default function Assets() {
   const [assetType, setAssetType] = useState('');
   const [environment, setEnvironment] = useState('');
   const [compliance, setCompliance] = useState('');
+  const [criticality, setCriticality] = useState('');
+  const [status, setStatus] = useState('');
+  const [source, setSource] = useState('');
+  const [policyExempt, setPolicyExempt] = useState('');
+  const [tagKey, setTagKey] = useState('');
+  const [tagValue, setTagValue] = useState('');
+  const [showMore, setShowMore] = useState(false);
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -25,10 +38,16 @@ export default function Assets() {
     if (assetType) params.set('assetType', assetType);
     if (environment) params.set('environment', environment);
     if (compliance) params.set('complianceStatus', compliance);
+    if (criticality) params.set('criticality', criticality);
+    if (status) params.set('status', status);
+    if (source) params.set('source', source);
+    if (policyExempt) params.set('policyExempt', policyExempt);
+    if (tagKey) params.set('tagKey', tagKey);
+    if (tagKey && tagValue) params.set('tagValue', tagValue);
     client.get(`/assets?${params}`).then((r) => setResult(r.data));
   };
 
-  useEffect(load, [page, assetType, environment, compliance]);
+  useEffect(load, [page, assetType, environment, compliance, criticality, status, source, policyExempt]);
 
   const remove = async (id: string, hostname: string) => {
     if (!window.confirm(`Delete asset "${hostname}"? It will be marked decommissioned and hidden from all views. This cannot be undone from the UI.`)) return;
@@ -77,7 +96,38 @@ export default function Assets() {
           {COMPLIANCE.map((t) => <option key={t} value={t}>{t || 'All compliance'}</option>)}
         </select>
         <button onClick={() => { setPage(1); load(); }}>Search</button>
+        <button className="secondary" onClick={() => setShowMore(!showMore)}>
+          {showMore ? 'Fewer filters' : 'More filters'}
+        </button>
       </div>
+
+      {showMore && (
+        <div className="filters">
+          <select value={criticality} onChange={(e) => { setCriticality(e.target.value); setPage(1); }}>
+            {CRITICALITIES.map((t) => <option key={t} value={t}>{t || 'All criticality'}</option>)}
+          </select>
+          <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+            {STATUSES.map((t) => <option key={t} value={t}>{t || 'All statuses'}</option>)}
+          </select>
+          <select value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}>
+            {CONNECTORS.map((t) => <option key={t} value={t}>{t || 'All connectors'}</option>)}
+          </select>
+          <select value={policyExempt} onChange={(e) => { setPolicyExempt(e.target.value); setPage(1); }}>
+            <option value="">Exempt: any</option>
+            <option value="true">Exempt only</option>
+            <option value="false">Not exempt</option>
+          </select>
+          <input placeholder="Tag key" value={tagKey}
+            onChange={(e) => setTagKey(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}
+            style={{ width: 120 }} />
+          <input placeholder="Tag value (optional)" value={tagValue}
+            onChange={(e) => setTagValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}
+            style={{ width: 150 }} />
+          <button onClick={() => { setPage(1); load(); }}>Apply</button>
+        </div>
+      )}
 
       {error && <div className="error" style={{ marginBottom: 10 }}>{error}</div>}
       <table className="data">

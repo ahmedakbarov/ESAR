@@ -137,6 +137,8 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             query = query.Where(a => a.CloudProvider == c.CloudProvider);
         if (c.MaxDataQualityScore is { } maxDq)
             query = query.Where(a => a.DataQualityScore <= maxDq);
+        if (c.PolicyExempt is { } policyExempt)
+            query = query.Where(a => a.PolicyExempt == policyExempt);
         if (!string.IsNullOrWhiteSpace(c.TagKey))
         {
             query = string.IsNullOrWhiteSpace(c.TagValue)
