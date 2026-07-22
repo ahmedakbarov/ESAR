@@ -11,12 +11,14 @@ interface ConnectorForm {
   priority: number;
   rateLimitPerMinute: number;
   defaultSyncMode: string;
-  settingsText: string; // key=value per line
+  settingsText: string; // key=value per line — fallback editor for types without a field layout below
+  settingsFields: Record<string, string>; // structured editor for CONNECTOR_FIELDS types
 }
 
 const emptyConnector: ConnectorForm = {
   name: '', type: 'ActiveDirectory', enabled: true, cronSchedule: '0 */4 * * *',
-  priority: 100, rateLimitPerMinute: 300, defaultSyncMode: 'Incremental', settingsText: '',
+  priority: 100, rateLimitPerMinute: 300, defaultSyncMode: 'Incremental',
+  settingsText: '', settingsFields: {},
 };
 
 function parseSettings(text: string): Record<string, string> {
@@ -28,14 +30,84 @@ function parseSettings(text: string): Record<string, string> {
   return result;
 }
 
-function settingsPlaceholder(type: string): string {
-  if (type === 'ActiveDirectory') {
-    return 'server=dc01.esar.local\\nport=636\\nbaseDn=DC=esar,DC=local\\nusername=svc_esar_ad@esar.local\\npassword=...\\nuseSsl=true\\nauthType=Basic\\ntimeoutSeconds=30\\nresolveDns=true\\ndnsTimeoutSeconds=5\\ndnsMaxConcurrency=8';
+const RAW_SETTINGS_PLACEHOLDER = 'tenantId=...\\nclientId=...\\nclientSecret=...';
+
+// Mirrors ConnectorsController.IsSecret exactly (SecretHints) so a field renders as a password
+// input, and shows the same "***" masked-on-edit convention, whenever the backend would encrypt it.
+const SECRET_HINTS = ['secret', 'password', 'token', 'apikey', 'accesskey', 'key'];
+function isSecretKey(key: string) {
+  const lower = key.toLowerCase();
+  return SECRET_HINTS.some((hint) => lower.includes(hint));
+}
+
+interface SettingField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  type?: 'checkbox';
+}
+
+// Structured per-field layout for the connector types operators set up most often. Any other type
+// falls back to the raw key=value textarea below — add an entry here to give it the same treatment.
+const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
+  CortexXdr: [
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api-<tenant>.xdr.<region>.paloaltonetworks.com' },
+    { key: 'apiKeyId', label: 'API Key ID' },
+    { key: 'apiKey', label: 'API Key (secret)' },
+  ],
+  ActiveDirectory: [
+    { key: 'server', label: 'Domain controller (FQDN)', placeholder: 'dc01.esar.local' },
+    { key: 'baseDn', label: 'Base DN', placeholder: 'DC=esar,DC=local' },
+    { key: 'username', label: 'Bind username (UPN)', placeholder: 'svc_esar_ad@esar.local' },
+    { key: 'password', label: 'Password' },
+    { key: 'port', label: 'Port', placeholder: '636' },
+    { key: 'useSsl', label: 'Use LDAPS (required)', type: 'checkbox' },
+    { key: 'authType', label: 'Auth type', placeholder: 'Basic' },
+    { key: 'timeoutSeconds', label: 'Timeout (seconds)', placeholder: '30' },
+    { key: 'resolveDns', label: 'Resolve DNS (needs private AD DNS)', type: 'checkbox' },
+    { key: 'dnsTimeoutSeconds', label: 'DNS timeout (seconds)', placeholder: '5' },
+    { key: 'dnsMaxConcurrency', label: 'DNS max concurrency', placeholder: '8' },
+    { key: 'macAttributes', label: 'MAC attributes (comma-separated LDAP attribute names)' },
+  ],
+  Azure: [
+    { key: 'tenantId', label: 'Tenant ID' },
+    { key: 'clientId', label: 'Client ID' },
+    { key: 'clientSecret', label: 'Client secret' },
+    { key: 'subscriptionIds', label: 'Subscription IDs (comma-separated, empty = all)' },
+  ],
+};
+
+const CONNECTOR_HELP: Record<string, string> = {
+  ActiveDirectory: 'Use the DC FQDN, LDAPS port 636, and a read-only UPN or bind DN. Resolve DNS needs ' +
+    'private AD DNS reachability and adds IP-only evidence.',
+  CortexXdr: 'API Key ID and API Key come from Palo Alto Cortex XDR → Settings → API Keys (Standard auth).',
+  Azure: 'App registration needs Reader on the subscriptions being synced. Leave Subscription IDs empty ' +
+    'to discover every subscription the app registration can see.',
+};
+
+function SettingFieldInput({ field, value, onChange }: {
+  field: SettingField; value: string; onChange: (value: string) => void;
+}) {
+  if (field.type === 'checkbox') {
+    return (
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        <input type="checkbox" checked={value === 'true'} onChange={(e) => onChange(String(e.target.checked))} />
+        {field.label}
+      </label>
+    );
   }
-  if (type === 'Azure') {
-    return 'tenantId=...\\nclientId=...\\nclientSecret=...\\nsubscriptionIds=00000000-0000-0000-0000-000000000000';
-  }
-  return 'tenantId=...\\nclientId=...\\nclientSecret=...';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <label className="muted" style={{ fontSize: 12 }}>{field.label}</label>
+      <input
+        type={isSecretKey(field.key) ? 'password' : 'text'}
+        placeholder={field.placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: 260 }}
+      />
+    </div>
+  );
 }
 
 export default function Connectors() {
@@ -53,9 +125,15 @@ export default function Connectors() {
   };
   useEffect(() => { load(); }, []);
 
+  const setField = (key: string, value: string) => {
+    if (!form) return;
+    setForm({ ...form, settingsFields: { ...form.settingsFields, [key]: value } });
+  };
+
   const save = async () => {
     if (!form) return;
     setError('');
+    const settings = form.type in CONNECTOR_FIELDS ? form.settingsFields : parseSettings(form.settingsText);
     const payload = {
       name: form.name,
       type: form.type,
@@ -64,7 +142,7 @@ export default function Connectors() {
       priority: form.priority,
       rateLimitPerMinute: form.rateLimitPerMinute,
       defaultSyncMode: form.defaultSyncMode,
-      settings: parseSettings(form.settingsText),
+      settings,
     };
     try {
       if (form.id) await client.put(`/connectors/${form.id}`, payload);
@@ -109,6 +187,8 @@ export default function Connectors() {
     setExpanded(id);
   };
 
+  const fields = form ? CONNECTOR_FIELDS[form.type] : undefined;
+
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -124,7 +204,7 @@ export default function Connectors() {
             <input placeholder="Name" value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ width: 200 }} />
             <select value={form.type} disabled={!!form.id}
-              onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              onChange={(e) => setForm({ ...form, type: e.target.value, settingsFields: {}, settingsText: '' })}>
               {types.map((t) => <option key={t}>{t}</option>)}
             </select>
             <input placeholder="Cron schedule" value={form.cronSchedule} title="Cron schedule"
@@ -143,15 +223,37 @@ export default function Connectors() {
                 onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Enabled
             </label>
           </div>
-          <h3>
-            {form.type === 'ActiveDirectory'
-              ? 'Active Directory: use the DC FQDN, LDAPS port 636, and a read-only UPN or bind DN. resolveDns needs private AD DNS and adds IP-only evidence; keep *** to preserve an existing encrypted password.'
-              : 'Settings (key=value per line; secrets are encrypted at rest, keep *** to preserve)'}
-          </h3>
-          <textarea rows={form.type === 'ActiveDirectory' ? 12 : 5} style={{ width: '100%', fontFamily: 'monospace' }}
-            placeholder={settingsPlaceholder(form.type)}
-            value={form.settingsText}
-            onChange={(e) => setForm({ ...form, settingsText: e.target.value })} />
+
+          {CONNECTOR_HELP[form.type] && (
+            <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{CONNECTOR_HELP[form.type]}</p>
+          )}
+
+          {fields ? (
+            <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 8 }}>
+                {fields.map((f) => (
+                  <SettingFieldInput key={f.key} field={f}
+                    value={form.settingsFields[f.key] ?? ''}
+                    onChange={(v) => setField(f.key, v)} />
+                ))}
+              </div>
+              {form.id && (
+                <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                  Secret fields show as *** when editing — leave as-is to keep the stored value, or
+                  type a new one to replace it.
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <h3>Settings (key=value per line; secrets are encrypted at rest, keep *** to preserve)</h3>
+              <textarea rows={5} style={{ width: '100%', fontFamily: 'monospace' }}
+                placeholder={RAW_SETTINGS_PLACEHOLDER}
+                value={form.settingsText}
+                onChange={(e) => setForm({ ...form, settingsText: e.target.value })} />
+            </>
+          )}
+
           {error && <div className="error" style={{ margin: '8px 0' }}>{error}</div>}
           <div style={{ marginTop: 8 }}>
             <button onClick={save}>Save connector</button>
@@ -194,6 +296,7 @@ export default function Connectors() {
                     rateLimitPerMinute: c.rateLimitPerMinute, defaultSyncMode: c.defaultSyncMode,
                     settingsText: Object.entries(c.settings ?? {})
                       .map(([k, v]) => `${k}=${v}`).join('\n'),
+                    settingsFields: { ...(c.settings ?? {}) },
                   })} style={{ marginRight: 6 }}>
                     Edit
                   </button>
