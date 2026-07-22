@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import client from '../api/client';
 import { Badge, formatDate, Modal } from '../components/Ui';
+import { useAuth } from '../auth/AuthContext';
 
 function ResetPasswordModal({ user, onClose, onDone }: {
   user: { id: string; username: string }; onClose: () => void; onDone: () => void;
@@ -41,6 +42,7 @@ function ResetPasswordModal({ user, onClose, onDone }: {
 }
 
 export default function Users() {
+  const { userId: myUserId } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -79,6 +81,15 @@ export default function Users() {
       setActionError(err.response?.data?.error ?? 'Delete failed');
     }
   };
+
+  // Mirrors the backend's last-manager guard (AdminControllers.cs, IsLastUserManagerAsync) so the
+  // Delete button can be disabled with an explanation instead of always failing after a click.
+  const managerRoleNames = new Set(
+    roles.filter((r) => r.permissions?.includes('users.manage')).map((r) => r.name)
+  );
+  const managerIds = users
+    .filter((u) => u.isActive && u.roles.some((rn: string) => managerRoleNames.has(rn)))
+    .map((u) => u.id);
 
   const removeRole = async (id: string, name: string) => {
     if (!window.confirm(`Delete role "${name}"? This cannot be undone.`)) return;
@@ -136,31 +147,40 @@ export default function Users() {
               <th>Roles</th><th>Active</th><th>Last Login</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.username}</td>
-                <td>{u.displayName}</td>
-                <td className="muted">{u.email}</td>
-                <td><Badge value={u.provider} /></td>
-                <td>{u.roles.map((r: string) => <span key={r} className="badge blue" style={{ marginRight: 4 }}>{r}</span>)}</td>
-                <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
-                <td className="muted">{formatDate(u.lastLoginAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {u.provider === 'Local' && (
-                      <button className="secondary"
-                        onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
-                        Reset password
+            {users.map((u) => {
+              const isSelf = !!myUserId && u.id === myUserId;
+              const isLastManager = managerIds.length === 1 && managerIds[0] === u.id;
+              const blockReason = isSelf ? 'You cannot delete your own account.'
+                : isLastManager ? 'This is the last user with user-management permission.' : undefined;
+              return (
+                <tr key={u.id}>
+                  <td>{u.username}</td>
+                  <td>{u.displayName}</td>
+                  <td className="muted">{u.email}</td>
+                  <td><Badge value={u.provider} /></td>
+                  <td>{u.roles.map((r: string) => <span key={r} className="badge blue" style={{ marginRight: 4 }}>{r}</span>)}</td>
+                  <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
+                  <td className="muted">{formatDate(u.lastLoginAt)}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {u.provider === 'Local' && (
+                        <button className="secondary"
+                          onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
+                          Reset password
+                        </button>
+                      )}
+                      <button className="secondary" onClick={() => toggleActive(u)}>
+                        {u.isActive ? 'Deactivate' : 'Activate'}
                       </button>
-                    )}
-                    <button className="secondary" onClick={() => toggleActive(u)}>
-                      {u.isActive ? 'Deactivate' : 'Activate'}
-                    </button>
-                    <button className="danger" onClick={() => removeUser(u.id, u.username)}>Delete</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      <button className="danger" disabled={!!blockReason} title={blockReason}
+                        onClick={() => removeUser(u.id, u.username)}>
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -30,6 +30,9 @@ public interface IAssetRepository : IRepository<Asset>
     Task<PagedResult<Asset>> SearchAsync(AssetSearchCriteria criteria, CancellationToken ct = default);
     /// <summary>Finds the golden asset already linked to a source record (connector + external id).</summary>
     Task<Asset?> FindBySourceAsync(ConnectorType connector, string externalId, CancellationToken ct = default);
+    /// <summary>Finds a soft-deleted asset previously linked to this source record, if any — used to
+    /// reactivate on rediscovery instead of failing on the (ConnectorType, ExternalId) unique constraint.</summary>
+    Task<Asset?> FindDeletedBySourceAsync(ConnectorType connector, string externalId, CancellationToken ct = default);
     /// <summary>Executes a hard-identifier lookup for one of the well-known match attributes.</summary>
     Task<Asset?> FindByHardIdentifierAsync(string attribute, string value, CancellationToken ct = default);
     /// <summary>Loads soft-match candidates by normalized hostname, MAC or IP overlap.</summary>

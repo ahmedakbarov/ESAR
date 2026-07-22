@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Esar.Application.Abstractions;
 using Esar.Application.Approvals;
+using Esar.Application.Auditing;
 using Esar.Application.Contracts;
 using Esar.Application.Matching;
 using Esar.Application.Merging;
@@ -27,10 +28,12 @@ public class AssetIngestionService : IAssetIngestionService
     private readonly IMergeEngine _merge;
     private readonly IApprovalService _approvals;
     private readonly IEventBus _events;
+    private readonly IAuditService _audit;
     private readonly ILogger<AssetIngestionService> _logger;
 
     public AssetIngestionService(IUnitOfWork uow, INormalizationService normalization, IMatchingEngine matching,
-        IMergeEngine merge, IApprovalService approvals, IEventBus events, ILogger<AssetIngestionService> logger)
+        IMergeEngine merge, IApprovalService approvals, IEventBus events, IAuditService audit,
+        ILogger<AssetIngestionService> logger)
     {
         _uow = uow;
         _normalization = normalization;
@@ -38,6 +41,7 @@ public class AssetIngestionService : IAssetIngestionService
         _merge = merge;
         _approvals = approvals;
         _events = events;
+        _audit = audit;
         _logger = logger;
     }
 
@@ -58,6 +62,26 @@ public class AssetIngestionService : IAssetIngestionService
             await UpdateExistingAsync(linked, normalized, ct);
             await _uow.SaveChangesAsync(ct);
             await _events.PublishAsync(EventTopics.AssetUpdated, new { AssetId = linked.Id, Source = normalized.Source.ToString() }, ct);
+            return IngestionOutcome.Updated;
+        }
+
+        // 1b. Previously (soft-)deleted but this source still reports it — reactivate instead of
+        // trying to create a fresh Asset, which would collide with the surviving AssetSource row
+        // on the (ConnectorType, ExternalId) unique constraint and fail every sync from now on.
+        var revived = await _uow.Assets.FindDeletedBySourceAsync(normalized.Source, normalized.ExternalId, ct);
+        if (revived is not null)
+        {
+            revived.IsDeleted = false;
+            revived.Status = AssetStatus.Active;
+            revived.LifecycleStatus = LifecycleStatus.Active;
+            await UpdateExistingAsync(revived, normalized, ct);
+            await _uow.SaveChangesAsync(ct);
+            await _audit.LogAsync(AuditAction.AssetReactivated, nameof(Asset), revived.Id.ToString(),
+                new { revived.Hostname, Source = normalized.Source.ToString(), normalized.ExternalId }, ct);
+            _logger.LogInformation(
+                "Asset {AssetId} ({Hostname}) was deleted but is still reported by {Source}:{ExternalId} — reactivated",
+                revived.Id, revived.Hostname, normalized.Source, normalized.ExternalId);
+            await _events.PublishAsync(EventTopics.AssetUpdated, new { AssetId = revived.Id, Source = normalized.Source.ToString() }, ct);
             return IngestionOutcome.Updated;
         }
 

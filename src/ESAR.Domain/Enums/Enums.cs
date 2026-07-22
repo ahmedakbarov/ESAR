@@ -199,6 +199,7 @@ public enum AuditAction
     AssetCreated = 1,
     AssetUpdated,
     AssetDeleted,
+    AssetReactivated,
     AssetMerged,
     Login,
     Logout,
