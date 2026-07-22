@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 
 export function StatCard({ label, value, hint, tone }: {
   label: string; value: string | number; hint?: string; tone?: 'good' | 'warn' | 'bad';
@@ -43,6 +43,46 @@ export function Panel({ title, children, actions }: {
 export function formatDate(value?: string) {
   if (!value) return '—';
   return new Date(value).toLocaleString();
+}
+
+/// Free-form list editor: type a value, press Enter/comma or blur to add it as a removable chip.
+export function ChipListInput({ values, onChange, placeholder }: {
+  values: string[]; onChange: (values: string[]) => void; placeholder?: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed && !values.includes(trimmed)) onChange([...values, trimmed]);
+    setDraft('');
+  };
+
+  return (
+    <div>
+      {values.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          {values.map((v) => (
+            <span key={v} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {v}
+              <button type="button" onClick={() => onChange(values.filter((x) => x !== v))}
+                aria-label={`Remove ${v}`}
+                style={{ all: 'unset', cursor: 'pointer', lineHeight: 1, fontWeight: 700 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+        }}
+        onBlur={commit}
+        style={{ width: 280 }}
+      />
+    </div>
+  );
 }
 
 export function Modal({ title, onClose, children }: {

@@ -2,6 +2,7 @@ using System.DirectoryServices.Protocols;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Esar.Application.Abstractions;
 using Esar.Application.Contracts;
 using Esar.Domain.Enums;
@@ -19,8 +20,12 @@ public class ActiveDirectoryConnector : IConnector
     private static readonly string[] DefaultAttributes =
     {
         "objectGUID", "dNSHostName", "name", "operatingSystem", "operatingSystemVersion",
-        "lastLogonTimestamp", "whenCreated", "distinguishedName", "userAccountControl", "description"
+        "lastLogonTimestamp", "whenCreated", "distinguishedName", "userAccountControl", "description",
+        "memberOf"
     };
+
+    /// <summary>Safety cap on AD group tags per asset — mirrors the MAC-attribute enrichment cap.</summary>
+    private const int MaxGroupTags = 50;
 
     private readonly ILogger<ActiveDirectoryConnector> _logger;
     public ActiveDirectoryConnector(ILogger<ActiveDirectoryConnector> logger) => _logger = logger;
@@ -135,6 +140,17 @@ public class ActiveDirectoryConnector : IConnector
                 };
                 asset.Identifiers[MatchAttributes.ObjectGuid] = objectGuid;
                 if (disabled) asset.Tags["ad_disabled"] = "true";
+                // AD group membership, surfaced as tags so compliance policies can scope by group
+                // (e.g. "adgroup:domain admins") without a dedicated schema field — see PolicyScopeMatcher.
+                foreach (var groupDn in GetValues(entry, "memberOf").Take(MaxGroupTags))
+                {
+                    var cn = ExtractCn(groupDn);
+                    if (string.IsNullOrWhiteSpace(cn)) continue;
+                    var key = $"adgroup:{cn.ToLowerInvariant()}";
+                    // AssetTag.Key is varchar(128) — truncate rather than fail the whole sync on one long CN.
+                    if (key.Length > 128) key = key[..128];
+                    asset.Tags[key] = "true";
+                }
                 foreach (var macAttribute in options.MacAttributes)
                     ActiveDirectoryNetworkEnrichment.AppendMacOnlyInterfaces(asset, GetValues(entry, macAttribute));
 
@@ -233,5 +249,20 @@ public class ActiveDirectoryConnector : IConnector
     {
         if (!entry.Attributes.Contains(attribute)) return Array.Empty<string?>();
         return entry.Attributes[attribute].GetValues(typeof(string)).OfType<string>();
+    }
+
+    /// <summary>Extracts the CN from a distinguished name (e.g. "CN=Domain Admins,OU=Groups,DC=esar,DC=local"
+    /// -> "Domain Admins"), honoring backslash-escaped commas inside the CN component (RFC 4514).</summary>
+    private static string? ExtractCn(string? dn)
+    {
+        if (dn is null || !dn.StartsWith("CN=", StringComparison.OrdinalIgnoreCase)) return null;
+        var sb = new StringBuilder();
+        for (var i = 3; i < dn.Length; i++)
+        {
+            if (dn[i] == '\\' && i + 1 < dn.Length) { sb.Append(dn[++i]); continue; }
+            if (dn[i] == ',') break;
+            sb.Append(dn[i]);
+        }
+        return sb.Length == 0 ? null : sb.ToString().Trim();
     }
 }

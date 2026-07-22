@@ -1,7 +1,7 @@
 # ESAR — Database Design
 
 PostgreSQL 16, normalized schema, enums stored as text, flexible payloads as `jsonb`.
-Authoritative DDL: [db/001_schema.sql](../db/001_schema.sql) + [db/003_v2_features.sql](../db/003_v2_features.sql) + [db/004_reconcile.sql](../db/004_reconcile.sql).
+Authoritative DDL: [db/001_schema.sql](../db/001_schema.sql) + [db/003_v2_features.sql](../db/003_v2_features.sql) + [db/004_reconcile.sql](../db/004_reconcile.sql) + [db/005_policy_scope_filters.sql](../db/005_policy_scope_filters.sql).
 
 ## ER diagram
 

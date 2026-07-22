@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Esar.Application.Abstractions;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
@@ -34,6 +33,11 @@ public class PolicyEngine : IPolicyEngine
     private readonly ICacheService _cache;
     private readonly ILogger<PolicyEngine> _logger;
 
+    // Compiled once per PolicyEngine instance (PolicyEngine is scoped — one instance per HTTP
+    // request or per Hangfire job run), so ComplianceJobs.EvaluateAllAsync's fleet-wide sweep
+    // compiles each policy's hostname-glob/CIDR filters once instead of once per asset evaluated.
+    private List<(CompliancePolicy Policy, CompiledPolicyScope Scope)>? _compiled;
+
     public PolicyEngine(IUnitOfWork uow, ICacheService cache, ILogger<PolicyEngine> logger)
     {
         _uow = uow;
@@ -43,8 +47,9 @@ public class PolicyEngine : IPolicyEngine
 
     public async Task<PolicyEvaluationPlan> GetPlanAsync(Asset asset, CancellationToken ct = default)
     {
-        var policies = await GetPoliciesAsync(ct);
-        var match = policies.OrderBy(p => p.Priority).FirstOrDefault(p => Applies(p, asset));
+        var compiled = await GetCompiledPoliciesAsync(ct);
+        var match = compiled.OrderBy(c => c.Policy.Priority)
+            .FirstOrDefault(c => PolicyScopeMatcher.Applies(c.Scope, asset)).Policy;
         if (match is null)
             return new PolicyEvaluationPlan(null, "Default baseline", DefaultControls, DefaultMandatory);
 
@@ -59,17 +64,13 @@ public class PolicyEngine : IPolicyEngine
         return new PolicyEvaluationPlan(match.Id, match.Name, required, mandatory);
     }
 
-    private static bool Applies(CompliancePolicy policy, Asset asset)
+    private async Task<List<(CompliancePolicy Policy, CompiledPolicyScope Scope)>> GetCompiledPoliciesAsync(
+        CancellationToken ct)
     {
-        var types = ParseStrings(policy.AppliesToAssetTypesJson);
-        if (types.Count > 0 && !types.Contains(asset.AssetType.ToString(), StringComparer.OrdinalIgnoreCase))
-            return false;
-        var environments = ParseStrings(policy.AppliesToEnvironmentsJson);
-        if (environments.Count > 0 &&
-            !environments.Contains(asset.Environment.ToString(), StringComparer.OrdinalIgnoreCase))
-            return false;
-        if (policy.MinCriticality is { } min && asset.Criticality < min) return false;
-        return true;
+        if (_compiled is not null) return _compiled;
+        var policies = await GetPoliciesAsync(ct);
+        _compiled = policies.Select(p => (p, CompiledPolicyScope.From(p))).ToList();
+        return _compiled;
     }
 
     private async Task<List<CompliancePolicy>> GetPoliciesAsync(CancellationToken ct)
@@ -81,14 +82,8 @@ public class PolicyEngine : IPolicyEngine
         return policies;
     }
 
-    private static List<string> ParseStrings(string json)
-    {
-        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
-        catch (JsonException) { return new List<string>(); }
-    }
-
     private static List<ControlType> ParseControls(string json)
-        => ParseStrings(json)
+        => PolicyScopeMatcher.ParseStrings(json)
             .Select(s => Enum.TryParse<ControlType>(s, true, out var c) ? c : (ControlType?)null)
             .Where(c => c is not null)
             .Select(c => c!.Value)
