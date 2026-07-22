@@ -209,6 +209,7 @@ public enum AuditAction
     ConnectorExecuted,
     UserCreated,
     UserUpdated,
+    UserDeleted,
     RoleChanged,
     ReportGenerated
 }

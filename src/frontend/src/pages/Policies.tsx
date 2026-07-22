@@ -126,6 +126,18 @@ export default function Policies() {
     }
   };
 
+  const remove = async (id: string, name: string) => {
+    if (!window.confirm(`Delete policy "${name}"? This cannot be undone.`)) return;
+    setError('');
+    try {
+      await client.delete(`/policies/${id}`);
+      if (form?.id === id) setForm(null);
+      load();
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Delete failed');
+    }
+  };
+
   const edit = (p: any) => setForm({
     id: p.id, name: p.name, description: p.description ?? '', enabled: p.enabled, priority: p.priority,
     appliesToAssetTypes: p.appliesToAssetTypes ?? [],
@@ -152,6 +164,7 @@ export default function Policies() {
           The first enabled policy (by priority) matching an asset defines which controls it must satisfy.
           Assets not matched by any policy use the full default baseline.
         </p>
+        {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
 
         {form && (
           <div className="card" style={{ marginBottom: 16 }}>
@@ -283,7 +296,6 @@ export default function Policies() {
                 </button>
               ))}
             </div>
-            {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
             <button onClick={save}>Save policy</button>
           </div>
         )}
@@ -308,7 +320,12 @@ export default function Policies() {
                   <td style={{ color: 'var(--red)' }}>{(p.mandatoryControls ?? []).join(', ')}</td>
                   <td className="muted">v{p.version}</td>
                   <td>{p.enabled ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
-                  <td><button className="secondary" onClick={() => edit(p)}>Edit</button></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="secondary" onClick={() => edit(p)}>Edit</button>
+                      <button className="danger" onClick={() => remove(p.id, p.name)}>Delete</button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}

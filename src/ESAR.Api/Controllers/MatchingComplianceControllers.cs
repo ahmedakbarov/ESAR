@@ -198,6 +198,20 @@ public class MatchingController : ControllerBase
         return Ok(rule);
     }
 
+    [HttpDelete("rules/{id:guid}")]
+    [Authorize("settings.manage")]
+    public async Task<IActionResult> DeleteRule(Guid id, CancellationToken ct)
+    {
+        var rule = await _uow.MatchingRules.GetByIdAsync(id, ct);
+        if (rule is null) return NotFound();
+        _uow.MatchingRules.Remove(rule);
+        await _uow.SaveChangesAsync(ct);
+        await _cache.RemoveAsync(CacheKeys.MatchingRules, ct);
+        await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(MatchingRule), rule.Id.ToString(),
+            new { action = "deleted", rule.Attribute }, ct);
+        return NoContent();
+    }
+
     public record ReviewRequest(string? Comment);
 }
 

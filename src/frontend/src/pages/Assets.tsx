@@ -16,6 +16,8 @@ export default function Assets() {
   const [environment, setEnvironment] = useState('');
   const [compliance, setCompliance] = useState('');
   const [page, setPage] = useState(1);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   const load = () => {
     const params = new URLSearchParams({ page: String(page), pageSize: '25' });
@@ -27,6 +29,20 @@ export default function Assets() {
   };
 
   useEffect(load, [page, assetType, environment, compliance]);
+
+  const remove = async (id: string, hostname: string) => {
+    if (!window.confirm(`Delete asset "${hostname}"? It will be marked decommissioned and hidden from all views. This cannot be undone from the UI.`)) return;
+    setError('');
+    setBusy(id);
+    try {
+      await client.delete(`/assets/${id}`);
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Delete failed');
+    } finally {
+      setBusy(null);
+      load();
+    }
+  };
 
   return (
     <div className="card">
@@ -50,11 +66,12 @@ export default function Assets() {
         <button onClick={() => { setPage(1); load(); }}>Search</button>
       </div>
 
+      {error && <div className="error" style={{ marginBottom: 10 }}>{error}</div>}
       <table className="data">
         <thead>
           <tr>
             <th>Hostname</th><th>Type</th><th>OS</th><th>IP</th><th>Environment</th>
-            <th>Criticality</th><th>Compliance</th><th>Sources</th><th>Last Seen</th>
+            <th>Criticality</th><th>Compliance</th><th>Sources</th><th>Last Seen</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -69,10 +86,15 @@ export default function Assets() {
               <td><Badge value={a.complianceStatus} /> <span className="muted">{a.complianceScore}%</span></td>
               <td className="muted">{a.sources.join(', ')}</td>
               <td className="muted">{formatDate(a.lastSeen)}</td>
+              <td>
+                <button className="danger" disabled={busy === a.id} onClick={() => remove(a.id, a.hostname)}>
+                  Delete
+                </button>
+              </td>
             </tr>
           ))}
           {result && result.items.length === 0 && (
-            <tr><td colSpan={9} className="muted">No assets found.</td></tr>
+            <tr><td colSpan={10} className="muted">No assets found.</td></tr>
           )}
         </tbody>
       </table>

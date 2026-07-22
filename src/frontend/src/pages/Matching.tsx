@@ -8,6 +8,7 @@ export default function Matching() {
   const [stats, setStats] = useState<any>(null);
   const [rules, setRules] = useState<any[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   const load = () => {
     client.get('/matching/review-queue').then((r) => setQueue(r.data));
@@ -19,6 +20,20 @@ export default function Matching() {
   const decide = async (id: string, action: 'approve' | 'reject') => {
     await client.post(`/matching/review-queue/${id}/${action}`, {});
     load();
+  };
+
+  const removeRule = async (id: string, name: string) => {
+    if (!window.confirm(
+      `Delete matching rule "${name}"? There is no undo and no "add rule" screen to recreate it — ` +
+      'if you might want it back, use the Enabled checkbox instead.'
+    )) return;
+    setError('');
+    try {
+      await client.delete(`/matching/rules/${id}`);
+      load();
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Delete failed');
+    }
   };
 
   return (
@@ -79,6 +94,7 @@ export default function Matching() {
       <p className="muted" style={{ marginBottom: 10 }}>
         Weights, order and activation are fully configurable — changes apply within 5 minutes (rule cache TTL).
       </p>
+      {error && <div className="error" style={{ marginBottom: 10 }}>{error}</div>}
       <div className="card">
         <table className="data">
           <thead><tr><th>Rule</th><th>Attribute</th><th>Type</th><th>Weight</th><th>Order</th>
@@ -103,14 +119,17 @@ export default function Matching() {
                 </td>
                 <td className="muted">v{r.version ?? 1}</td>
                 <td>
-                  <button className="secondary" onClick={async () => {
-                    await client.put(`/matching/rules/${r.id}`, {
-                      weight: Number(r._weight ?? r.weight),
-                      order: Number(r._order ?? r.order),
-                      enabled: r._enabled ?? r.enabled,
-                    });
-                    load();
-                  }}>Save</button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="secondary" onClick={async () => {
+                      await client.put(`/matching/rules/${r.id}`, {
+                        weight: Number(r._weight ?? r.weight),
+                        order: Number(r._order ?? r.order),
+                        enabled: r._enabled ?? r.enabled,
+                      });
+                      load();
+                    }}>Save</button>
+                    <button className="danger" onClick={() => removeRule(r.id, r.name)}>Delete</button>
+                  </div>
                 </td>
               </tr>
             ))}
