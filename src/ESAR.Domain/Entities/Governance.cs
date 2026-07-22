@@ -37,6 +37,16 @@ public class CompliancePolicy : AuditableEntity
     public string AppliesToEnvironmentsJson { get; set; } = "[]";
     /// <summary>Minimum criticality for the policy to apply; null = any.</summary>
     public CriticalityLevel? MinCriticality { get; set; }
+    /// <summary>jsonb array of ConnectorType names; empty = any source. Matches if any of the asset's sources is listed.</summary>
+    public string AppliesToConnectorsJson { get; set; } = "[]";
+    /// <summary>jsonb array of "key" or "key=value" tag filters; empty = no tag constraint. Matches if any entry matches any asset tag.</summary>
+    public string AppliesToTagsJson { get; set; } = "[]";
+    /// <summary>jsonb array of hostname glob patterns (*, ?); empty = any hostname. Matched against NormalizedHostname.</summary>
+    public string AppliesToHostnamePatternsJson { get; set; } = "[]";
+    /// <summary>jsonb array of CIDR ranges; empty = any IP. Matches if any asset IP falls in any listed range.</summary>
+    public string AppliesToIpRangesJson { get; set; } = "[]";
+    /// <summary>jsonb array of cloud subscription ids; empty = any subscription.</summary>
+    public string AppliesToSubscriptionsJson { get; set; } = "[]";
 
     // --- Requirements ---
     /// <summary>jsonb array of ControlType names that are evaluated for matching assets.</summary>

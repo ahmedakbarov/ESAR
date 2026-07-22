@@ -111,6 +111,8 @@ public class PoliciesController : ControllerBase
 
     public record PolicyRequest(string Name, string? Description, bool Enabled, int Priority,
         List<string> AppliesToAssetTypes, List<string> AppliesToEnvironments, string? MinCriticality,
+        List<string> AppliesToConnectors, List<string> AppliesToTags, List<string> AppliesToHostnamePatterns,
+        List<string> AppliesToIpRanges, List<string> AppliesToSubscriptions,
         List<string> RequiredControls, List<string> MandatoryControls);
 
     [HttpPost]
@@ -166,11 +168,30 @@ public class PoliciesController : ControllerBase
         foreach (var control in request.RequiredControls.Concat(request.MandatoryControls))
             if (!Enum.TryParse<ControlType>(control, true, out _))
                 return $"Unknown control '{control}'. Valid: {string.Join(", ", Enum.GetNames<ControlType>())}";
+        if (request.MandatoryControls.Any(m => !request.RequiredControls.Contains(m, StringComparer.OrdinalIgnoreCase)))
+            return "Every mandatory control must also be in the required controls list.";
+        return ValidateScope(request);
+    }
+
+    private static string? ValidateScope(PolicyRequest request)
+    {
         foreach (var type in request.AppliesToAssetTypes)
             if (!Enum.TryParse<AssetType>(type, true, out _))
                 return $"Unknown asset type '{type}'.";
-        if (request.MandatoryControls.Any(m => !request.RequiredControls.Contains(m, StringComparer.OrdinalIgnoreCase)))
-            return "Every mandatory control must also be in the required controls list.";
+        foreach (var environment in request.AppliesToEnvironments)
+            if (!Enum.TryParse<EnvironmentType>(environment, true, out _))
+                return $"Unknown environment '{environment}'.";
+        if (request.MinCriticality is not null && !Enum.TryParse<CriticalityLevel>(request.MinCriticality, true, out _))
+            return $"Unknown criticality '{request.MinCriticality}'.";
+        foreach (var connector in request.AppliesToConnectors)
+            if (!Enum.TryParse<ConnectorType>(connector, true, out _))
+                return $"Unknown connector type '{connector}'.";
+        foreach (var tag in request.AppliesToTags)
+            if (string.IsNullOrWhiteSpace(tag.Split('=')[0]))
+                return $"Tag filter '{tag}' needs a non-empty key.";
+        foreach (var range in request.AppliesToIpRanges)
+            if (!PolicyScopeMatcher.TryParseCidr(range, out _))
+                return $"Invalid IP range '{range}'. Use CIDR notation, e.g. 10.0.0.0/8.";
         return null;
     }
 
@@ -184,6 +205,11 @@ public class PoliciesController : ControllerBase
         policy.AppliesToEnvironmentsJson = JsonSerializer.Serialize(request.AppliesToEnvironments);
         policy.MinCriticality = Enum.TryParse<CriticalityLevel>(request.MinCriticality, true, out var crit)
             ? crit : null;
+        policy.AppliesToConnectorsJson = JsonSerializer.Serialize(request.AppliesToConnectors);
+        policy.AppliesToTagsJson = JsonSerializer.Serialize(request.AppliesToTags);
+        policy.AppliesToHostnamePatternsJson = JsonSerializer.Serialize(request.AppliesToHostnamePatterns);
+        policy.AppliesToIpRangesJson = JsonSerializer.Serialize(request.AppliesToIpRanges);
+        policy.AppliesToSubscriptionsJson = JsonSerializer.Serialize(request.AppliesToSubscriptions);
         policy.RequiredControlsJson = JsonSerializer.Serialize(request.RequiredControls);
         policy.MandatoryControlsJson = JsonSerializer.Serialize(request.MandatoryControls);
     }
@@ -201,6 +227,11 @@ public class PoliciesController : ControllerBase
         AppliesToAssetTypes = JsonSerializer.Deserialize<List<string>>(p.AppliesToAssetTypesJson),
         AppliesToEnvironments = JsonSerializer.Deserialize<List<string>>(p.AppliesToEnvironmentsJson),
         MinCriticality = p.MinCriticality?.ToString(),
+        AppliesToConnectors = JsonSerializer.Deserialize<List<string>>(p.AppliesToConnectorsJson),
+        AppliesToTags = JsonSerializer.Deserialize<List<string>>(p.AppliesToTagsJson),
+        AppliesToHostnamePatterns = JsonSerializer.Deserialize<List<string>>(p.AppliesToHostnamePatternsJson),
+        AppliesToIpRanges = JsonSerializer.Deserialize<List<string>>(p.AppliesToIpRangesJson),
+        AppliesToSubscriptions = JsonSerializer.Deserialize<List<string>>(p.AppliesToSubscriptionsJson),
         RequiredControls = JsonSerializer.Deserialize<List<string>>(p.RequiredControlsJson),
         MandatoryControls = JsonSerializer.Deserialize<List<string>>(p.MandatoryControlsJson),
         p.UpdatedAt, p.UpdatedBy

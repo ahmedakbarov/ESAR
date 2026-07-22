@@ -272,6 +272,11 @@ public class EsarDbContext : DbContext
             e.Property(x => x.Name).HasMaxLength(128).IsRequired();
             e.Property(x => x.AppliesToAssetTypesJson).HasColumnType("jsonb");
             e.Property(x => x.AppliesToEnvironmentsJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToConnectorsJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToTagsJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToHostnamePatternsJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToIpRangesJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToSubscriptionsJson).HasColumnType("jsonb");
             e.Property(x => x.RequiredControlsJson).HasColumnType("jsonb");
             e.Property(x => x.MandatoryControlsJson).HasColumnType("jsonb");
         });
