@@ -48,12 +48,48 @@ export default function Users() {
   const [error, setError] = useState('');
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null);
   const [notice, setNotice] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
     client.get('/roles').then((r) => setRoles(r.data));
   };
   useEffect(load, []);
+
+  const toggleActive = async (u: any) => {
+    setActionError('');
+    try {
+      await client.put(`/users/${u.id}`, { isActive: !u.isActive });
+      load();
+    } catch (err: any) {
+      setActionError(err.response?.data?.error ?? 'Failed to update user');
+    }
+  };
+
+  const removeUser = async (id: string, username: string) => {
+    if (!window.confirm(
+      `Delete user "${username}"? This permanently removes the account and cannot be undone. ` +
+      'Consider Deactivate instead if you may need this account again.'
+    )) return;
+    setActionError('');
+    try {
+      await client.delete(`/users/${id}`);
+      load();
+    } catch (err: any) {
+      setActionError(err.response?.data?.error ?? 'Delete failed');
+    }
+  };
+
+  const removeRole = async (id: string, name: string) => {
+    if (!window.confirm(`Delete role "${name}"? This cannot be undone.`)) return;
+    setActionError('');
+    try {
+      await client.delete(`/roles/${id}`);
+      load();
+    } catch (err: any) {
+      setActionError(err.response?.data?.error ?? 'Delete failed');
+    }
+  };
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
@@ -76,6 +112,7 @@ export default function Users() {
           <button onClick={() => setShowForm(!showForm)}>{showForm ? 'Cancel' : 'New user'}</button>
         </div>
         {notice && <div className="muted" style={{ marginBottom: 10 }}>{notice}</div>}
+        {actionError && <div className="error" style={{ marginBottom: 10 }}>{actionError}</div>}
         {showForm && (
           <form onSubmit={create} className="filters" style={{ marginBottom: 16 }}>
             <input placeholder="Username" value={form.username}
@@ -109,9 +146,18 @@ export default function Users() {
                 <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
                 <td className="muted">{formatDate(u.lastLoginAt)}</td>
                 <td>
-                  {u.provider === 'Local'
-                    ? <button className="secondary" onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>Reset password</button>
-                    : <span className="muted" style={{ fontSize: 12 }}>managed by {u.provider}</span>}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {u.provider === 'Local' && (
+                      <button className="secondary"
+                        onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
+                        Reset password
+                      </button>
+                    )}
+                    <button className="secondary" onClick={() => toggleActive(u)}>
+                      {u.isActive ? 'Deactivate' : 'Activate'}
+                    </button>
+                    <button className="danger" onClick={() => removeUser(u.id, u.username)}>Delete</button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -122,13 +168,18 @@ export default function Users() {
       <h2 className="section-title">Roles</h2>
       <div className="card">
         <table className="data">
-          <thead><tr><th>Role</th><th>Description</th><th>Permissions</th></tr></thead>
+          <thead><tr><th>Role</th><th>Description</th><th>Permissions</th><th></th></tr></thead>
           <tbody>
             {roles.map((r) => (
               <tr key={r.id}>
                 <td>{r.name} {r.isSystem && <span className="badge muted">system</span>}</td>
                 <td className="muted">{r.description}</td>
                 <td className="muted" style={{ maxWidth: 480 }}>{r.permissions?.join(', ')}</td>
+                <td>
+                  {r.isSystem
+                    ? <span className="muted" style={{ fontSize: 12 }}>built-in</span>
+                    : <button className="danger" onClick={() => removeRole(r.id, r.name)}>Delete</button>}
+                </td>
               </tr>
             ))}
           </tbody>

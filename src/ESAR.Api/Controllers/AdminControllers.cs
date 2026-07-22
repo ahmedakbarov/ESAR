@@ -16,12 +16,14 @@ public class UsersController : ControllerBase
     private readonly IUnitOfWork _uow;
     private readonly IPasswordHasher _hasher;
     private readonly IAuditService _audit;
+    private readonly ICurrentUserService _currentUser;
 
-    public UsersController(IUnitOfWork uow, IPasswordHasher hasher, IAuditService audit)
+    public UsersController(IUnitOfWork uow, IPasswordHasher hasher, IAuditService audit, ICurrentUserService currentUser)
     {
         _uow = uow;
         _hasher = hasher;
         _audit = audit;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
@@ -110,6 +112,41 @@ public class UsersController : ControllerBase
         await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(), null, ct);
         return Ok(new { user.Id });
     }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize("users.manage")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var user = await _uow.Users.GetByIdAsync(id, ct);
+        if (user is null) return NotFound();
+        if (id == _currentUser.UserId) return BadRequest(new { error = "You cannot delete your own account." });
+        if (await IsLastUserManagerAsync(id, ct))
+            return BadRequest(new { error = "Cannot delete the last user with user-management permission." });
+
+        var links = await _uow.UserRoles.ListAsync(ur => ur.UserId == id, ct);
+        foreach (var link in links) _uow.UserRoles.Remove(link);
+        _uow.Users.Remove(user);
+        await _uow.SaveChangesAsync(ct);
+        await _audit.LogAsync(AuditAction.UserDeleted, nameof(User), user.Id.ToString(),
+            new { user.Username, user.Email }, ct);
+        return NoContent();
+    }
+
+    /// <summary>True if removing `excludingUserId` would leave zero active users holding "users.manage".
+    /// Prevents locking the admin panel via self-service deletion of the last account able to reverse it.</summary>
+    private async Task<bool> IsLastUserManagerAsync(Guid excludingUserId, CancellationToken ct)
+    {
+        var managePermission = await _uow.Permissions.FirstOrDefaultAsync(p => p.Code == "users.manage", ct);
+        if (managePermission is null) return false;
+        var roleIds = (await _uow.RolePermissions.ListAsync(rp => rp.PermissionId == managePermission.Id, ct))
+            .Select(rp => rp.RoleId).ToHashSet();
+        if (roleIds.Count == 0) return false;
+        var managerUserIds = (await _uow.UserRoles.ListAsync(ur => roleIds.Contains(ur.RoleId), ct))
+            .Select(ur => ur.UserId).ToHashSet();
+        var activeManagerCount = (await _uow.Users.ListAsync(
+            u => u.IsActive && managerUserIds.Contains(u.Id), ct)).Count;
+        return activeManagerCount <= 1 && managerUserIds.Contains(excludingUserId);
+    }
 }
 
 [ApiController]
@@ -189,6 +226,26 @@ public class RolesController : ControllerBase
         await _audit.LogAsync(AuditAction.RoleChanged, nameof(Role), role.Id.ToString(),
             new { action = "updated" }, ct);
         return Ok(new { role.Id });
+    }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize("roles.manage")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var role = await _uow.Roles.GetByIdAsync(id, ct);
+        if (role is null) return NotFound();
+        if (role.IsSystem) return BadRequest(new { error = "Built-in roles cannot be deleted." });
+        var assignees = await _uow.UserRoles.ListAsync(ur => ur.RoleId == id, ct);
+        if (assignees.Count > 0)
+            return BadRequest(new { error = $"Role is assigned to {assignees.Count} user(s); unassign it first." });
+
+        var permissionLinks = await _uow.RolePermissions.ListAsync(rp => rp.RoleId == id, ct);
+        foreach (var link in permissionLinks) _uow.RolePermissions.Remove(link);
+        _uow.Roles.Remove(role);
+        await _uow.SaveChangesAsync(ct);
+        await _audit.LogAsync(AuditAction.RoleChanged, nameof(Role), role.Id.ToString(),
+            new { action = "deleted", role.Name }, ct);
+        return NoContent();
     }
 }
 
