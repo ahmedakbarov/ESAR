@@ -44,6 +44,19 @@ export default function Assets() {
     }
   };
 
+  const enablePolicy = async (id: string) => {
+    setError('');
+    setBusy(id);
+    try {
+      await client.put(`/assets/${id}`, { policyExempt: false });
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Failed to re-enable policy evaluation');
+    } finally {
+      setBusy(null);
+      load();
+    }
+  };
+
   return (
     <div className="card">
       <div className="filters">
@@ -77,7 +90,10 @@ export default function Assets() {
         <tbody>
           {result?.items.map((a) => (
             <tr key={a.id}>
-              <td><Link to={`/assets/${a.id}`}>{a.hostname}</Link></td>
+              <td>
+                <Link to={`/assets/${a.id}`}>{a.hostname}</Link>
+                {a.policyExempt && <> <Badge value="Policy Exempt" /></>}
+              </td>
               <td>{a.assetType}</td>
               <td>{a.operatingSystem ?? '—'}</td>
               <td>{a.primaryIp ?? '—'}</td>
@@ -87,9 +103,16 @@ export default function Assets() {
               <td className="muted">{a.sources.join(', ')}</td>
               <td className="muted">{formatDate(a.lastSeen)}</td>
               <td>
-                <button className="danger" disabled={busy === a.id} onClick={() => remove(a.id, a.hostname)}>
-                  Delete
-                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {a.policyExempt && (
+                    <button className="secondary" disabled={busy === a.id} onClick={() => enablePolicy(a.id)}>
+                      Enable
+                    </button>
+                  )}
+                  <button className="danger" disabled={busy === a.id} onClick={() => remove(a.id, a.hostname)}>
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
