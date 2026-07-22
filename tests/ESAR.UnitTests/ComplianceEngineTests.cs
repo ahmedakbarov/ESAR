@@ -111,4 +111,28 @@ public class ComplianceEngineTests
             c.Control == ControlType.SiemLogSource && c.Status == ComplianceStatus.NonCompliant &&
             c.Details!.Contains("stale"));
     }
+
+    [Fact]
+    public async Task Policy_exempt_asset_skips_evaluation_and_resets_prior_results()
+    {
+        var asset = new Asset
+        {
+            Hostname = "srv-exempt",
+            PolicyExempt = true,
+            ComplianceScore = 87m,
+            ComplianceStatus = ComplianceStatus.Compliant,
+            ComplianceRecords =
+            {
+                new AssetCompliance { Control = ControlType.SiemLogSource, Status = ComplianceStatus.Compliant }
+            }
+        };
+
+        var status = await _sut.EvaluateAsync(asset);
+
+        status.Should().Be(ComplianceStatus.Unknown);
+        asset.ComplianceStatus.Should().Be(ComplianceStatus.Unknown);
+        asset.ComplianceScore.Should().Be(0);
+        asset.ComplianceRecords.Should().BeEmpty();
+        _policies.Verify(p => p.GetPlanAsync(It.IsAny<Asset>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

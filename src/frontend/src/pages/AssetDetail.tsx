@@ -20,6 +20,10 @@ export default function AssetDetail() {
   const analyzeImpact = () =>
     client.get(`/relationships/asset/${id}/impact?depth=3`).then((r) => setImpact(r.data));
 
+  const togglePolicyExempt = () =>
+    client.put(`/assets/${id}`, { policyExempt: !asset.policyExempt }).then(() =>
+      client.get(`/assets/${id}`).then((r) => setAsset(r.data)));
+
   if (!asset) return <div className="muted">Loading…</div>;
 
   const scoreTone = (v: number) => (v >= 80 ? 'good' : v >= 50 ? 'warn' : 'bad');
@@ -27,14 +31,22 @@ export default function AssetDetail() {
   return (
     <>
       <div className="topbar">
-        <h1>{asset.hostname} <Badge value={asset.status} /></h1>
-        <button
-          className="secondary"
-          onClick={() => client.post(`/compliance/assets/${id}/evaluate`).then(() =>
-            client.get(`/assets/${id}`).then((r) => setAsset(r.data)))}
-        >
-          Re-evaluate compliance
-        </button>
+        <h1>
+          {asset.hostname} <Badge value={asset.status} />{' '}
+          {asset.policyExempt && <Badge value="Policy Exempt" />}
+        </h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="secondary" onClick={togglePolicyExempt}>
+            {asset.policyExempt ? 'Re-enable policy evaluation' : 'Exempt from policy evaluation'}
+          </button>
+          <button
+            className="secondary"
+            onClick={() => client.post(`/compliance/assets/${id}/evaluate`).then(() =>
+              client.get(`/assets/${id}`).then((r) => setAsset(r.data)))}
+          >
+            Re-evaluate compliance
+          </button>
+        </div>
       </div>
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
@@ -81,6 +93,11 @@ export default function AssetDetail() {
       </div>
 
       <h2 className="section-title">Compliance — {asset.complianceScore}% <Badge value={asset.complianceStatus} /></h2>
+      {asset.policyExempt && (
+        <p className="muted" style={{ marginTop: -8, marginBottom: 10 }}>
+          This asset is excluded from policy evaluation — no controls are checked while exempt.
+        </p>
+      )}
       <div className="card">
         <table className="data">
           <thead><tr><th>Control</th><th>Status</th><th>Evidence</th><th>Details</th><th>Checked</th></tr></thead>

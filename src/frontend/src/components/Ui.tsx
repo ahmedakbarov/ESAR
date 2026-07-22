@@ -19,6 +19,7 @@ const toneMap: Record<string, string> = {
   Open: 'red', InProgress: 'amber', Resolved: 'green', Closed: 'muted',
   Succeeded: 'green', Failed: 'red', Running: 'blue',
   Production: 'blue', Test: 'muted', Development: 'muted', Staging: 'amber',
+  'Policy Exempt': 'amber',
 };
 
 export function Badge({ value }: { value?: string }) {
