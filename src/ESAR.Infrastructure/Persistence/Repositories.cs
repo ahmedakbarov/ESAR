@@ -159,6 +159,11 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             .Where(a => !a.IsDeleted && a.MergedIntoAssetId == null)
             .FirstOrDefaultAsync(a => a.Sources.Any(s => s.ConnectorType == connector && s.ExternalId == externalId), ct);
 
+    public Task<Asset?> FindDeletedBySourceAsync(ConnectorType connector, string externalId, CancellationToken ct = default)
+        => Detailed.IgnoreQueryFilters()
+            .Where(a => a.IsDeleted && a.MergedIntoAssetId == null)
+            .FirstOrDefaultAsync(a => a.Sources.Any(s => s.ConnectorType == connector && s.ExternalId == externalId), ct);
+
     public Task<Asset?> FindByHardIdentifierAsync(string attribute, string value, CancellationToken ct = default)
     {
         var q = Detailed.Where(a => a.MergedIntoAssetId == null);

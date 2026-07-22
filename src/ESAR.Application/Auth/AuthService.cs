@@ -15,7 +15,7 @@ public interface IAuthService
 }
 
 public record LoginResult(bool Success, string? Token, DateTime? ExpiresAt, string? Error,
-    string? DisplayName = null, IReadOnlyList<string>? Roles = null);
+    string? DisplayName = null, IReadOnlyList<string>? Roles = null, Guid? UserId = null);
 
 public record ChangePasswordResult(bool Success, string? Error);
 
@@ -76,7 +76,7 @@ public class AuthService : IAuthService
         var (token, expires) = _jwt.CreateToken(user, roles, permissions);
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.Login, nameof(User), user.Id.ToString(), new { user.Username }, ct);
-        return new LoginResult(true, token, expires, null, user.DisplayName, roles);
+        return new LoginResult(true, token, expires, null, user.DisplayName, roles, user.Id);
     }
 
     public async Task<ChangePasswordResult> ChangePasswordAsync(Guid userId, string currentPassword,

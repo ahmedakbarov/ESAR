@@ -1,5 +1,6 @@
 using Esar.Application.Abstractions;
 using Esar.Application.Approvals;
+using Esar.Application.Auditing;
 using Esar.Application.Contracts;
 using Esar.Application.Ingestion;
 using Esar.Application.Matching;
@@ -24,6 +25,7 @@ public class AssetIngestionServiceTests
     private readonly Mock<IMergeEngine> _merge = new();
     private readonly Mock<IApprovalService> _approvals = new();
     private readonly Mock<IEventBus> _events = new();
+    private readonly Mock<IAuditService> _audit = new();
     private readonly AssetIngestionService _sut;
 
     public AssetIngestionServiceTests()
@@ -42,9 +44,11 @@ public class AssetIngestionServiceTests
             .Returns(Task.CompletedTask);
         _events.Setup(bus => bus.PublishAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _audit.Setup(audit => audit.LogAsync(It.IsAny<AuditAction>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<object>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         _sut = new AssetIngestionService(_uow.Object, _normalization.Object, _matching.Object, _merge.Object,
-            _approvals.Object, _events.Object, NullLogger<AssetIngestionService>.Instance);
+            _approvals.Object, _events.Object, _audit.Object, NullLogger<AssetIngestionService>.Instance);
     }
 
     [Fact]
@@ -79,5 +83,38 @@ public class AssetIngestionServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
         _assets.Verify(repository => repository.Update(existing), Times.Once);
         _uow.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Rediscovering_a_deleted_asset_reactivates_it_instead_of_creating_a_duplicate()
+    {
+        const string externalId = "CN=old-server,OU=Computers,DC=esar,DC=local";
+        var seenAt = new DateTime(2026, 7, 22, 9, 0, 0, DateTimeKind.Utc);
+        var deletedAsset = new Asset
+        {
+            Hostname = "old-server", NormalizedHostname = "old-server",
+            IsDeleted = true, Status = AssetStatus.Decommissioned, LifecycleStatus = LifecycleStatus.Retired
+        };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.ActiveDirectory, ExternalId = externalId, Hostname = "old-server", SeenAt = seenAt
+        };
+
+        _assets.Setup(repository =>
+                repository.FindBySourceAsync(ConnectorType.ActiveDirectory, externalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(repository =>
+                repository.FindDeletedBySourceAsync(ConnectorType.ActiveDirectory, externalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(deletedAsset);
+
+        var outcome = await _sut.IngestAsync(incoming);
+
+        outcome.Should().Be(IngestionOutcome.Updated);
+        deletedAsset.IsDeleted.Should().BeFalse();
+        deletedAsset.Status.Should().Be(AssetStatus.Active);
+        deletedAsset.LifecycleStatus.Should().Be(LifecycleStatus.Active);
+        _matching.Verify(engine => engine.MatchAsync(It.IsAny<DiscoveredAsset>(), It.IsAny<CancellationToken>()), Times.Never);
+        _audit.Verify(audit => audit.LogAsync(AuditAction.AssetReactivated, nameof(Asset), deletedAsset.Id.ToString(),
+            It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }
