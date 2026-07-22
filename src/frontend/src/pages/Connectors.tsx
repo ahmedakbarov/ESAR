@@ -47,8 +47,16 @@ interface SettingField {
   type?: 'checkbox';
 }
 
-// Structured per-field layout for the connector types operators set up most often. Any other type
-// falls back to the raw key=value textarea below — add an entry here to give it the same treatment.
+// Shared by every Entra ID (Azure AD) app-registration connector — see AadConnectorBase.AcquireTokenAsync.
+const AAD_CREDENTIAL_FIELDS: SettingField[] = [
+  { key: 'tenantId', label: 'Tenant ID' },
+  { key: 'clientId', label: 'Client ID' },
+  { key: 'clientSecret', label: 'Client secret' },
+];
+
+// Structured per-field layout for every connector type with a real implementation (see
+// DependencyInjection.cs's IConnector registrations — /connectors/types only ever lists these).
+// Any type without an entry here falls back to the raw key=value textarea below.
 const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
   CortexXdr: [
     { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api-<tenant>.xdr.<region>.paloaltonetworks.com' },
@@ -70,10 +78,51 @@ const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
     { key: 'macAttributes', label: 'MAC attributes (comma-separated LDAP attribute names)' },
   ],
   Azure: [
-    { key: 'tenantId', label: 'Tenant ID' },
+    ...AAD_CREDENTIAL_FIELDS,
+    { key: 'subscriptionIds', label: 'Subscription IDs (comma-separated, empty = all)' },
+  ],
+  EntraId: AAD_CREDENTIAL_FIELDS,
+  Intune: AAD_CREDENTIAL_FIELDS,
+  MicrosoftDefender: AAD_CREDENTIAL_FIELDS,
+  VmwareVCenter: [
+    { key: 'baseUrl', label: 'vCenter URL', placeholder: 'https://vcenter.example.com' },
+    { key: 'username', label: 'Username' },
+    { key: 'password', label: 'Password' },
+  ],
+  CrowdStrike: [
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.crowdstrike.com' },
     { key: 'clientId', label: 'Client ID' },
     { key: 'clientSecret', label: 'Client secret' },
-    { key: 'subscriptionIds', label: 'Subscription IDs (comma-separated, empty = all)' },
+  ],
+  SentinelOne: [
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://<tenant>.sentinelone.net' },
+    { key: 'apiToken', label: 'API token' },
+  ],
+  Tenable: [
+    { key: 'accessKey', label: 'Access key' },
+    { key: 'secretKey', label: 'Secret key' },
+  ],
+  Qualys: [
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://gateway.qg1.apps.qualys.com' },
+    { key: 'username', label: 'Username' },
+    { key: 'password', label: 'Password' },
+  ],
+  ServiceNowCmdb: [
+    { key: 'instanceUrl', label: 'Instance URL', placeholder: 'https://<instance>.service-now.com' },
+    { key: 'username', label: 'Username' },
+    { key: 'password', label: 'Password' },
+    { key: 'table', label: 'CMDB table (optional)', placeholder: 'cmdb_ci_computer' },
+  ],
+  GenericRest: [
+    { key: 'url', label: 'URL' },
+    { key: 'authHeader', label: 'Auth header (optional)', placeholder: 'Authorization: Bearer xyz' },
+    { key: 'itemsPath', label: 'Items path (optional, dot path to the array; default = response root)' },
+    { key: 'idField', label: 'ID field', placeholder: 'id' },
+    { key: 'hostnameField', label: 'Hostname field', placeholder: 'hostname' },
+    { key: 'osField', label: 'OS field (optional)' },
+    { key: 'ipField', label: 'IP field (optional)' },
+    { key: 'macField', label: 'MAC field (optional)' },
+    { key: 'serialField', label: 'Serial field (optional)' },
   ],
 };
 
@@ -83,6 +132,18 @@ const CONNECTOR_HELP: Record<string, string> = {
   CortexXdr: 'API Key ID and API Key come from Palo Alto Cortex XDR → Settings → API Keys (Standard auth).',
   Azure: 'App registration needs Reader on the subscriptions being synced. Leave Subscription IDs empty ' +
     'to discover every subscription the app registration can see.',
+  EntraId: 'App registration needs Directory.Read.All (application permission, admin-consented).',
+  Intune: 'App registration needs DeviceManagementManagedDevices.Read.All (application permission, admin-consented).',
+  MicrosoftDefender: 'App registration needs Machine.Read.All on the Microsoft Defender for Endpoint API ' +
+    '(application permission, admin-consented).',
+  VmwareVCenter: 'Read-only vCenter account is enough — this only lists VMs, it never changes anything.',
+  CrowdStrike: 'API client needs the Hosts: Read scope. Base URL depends on your CrowdStrike cloud region.',
+  SentinelOne: 'API token is generated per-user in Settings → Users, or as a dedicated service user.',
+  Tenable: 'Access key and secret key come from Tenable.io → Settings → My Account → API Keys.',
+  Qualys: 'Use a Qualys user with the Reader role and API access enabled.',
+  ServiceNowCmdb: 'Account needs read access to the CMDB table. Table defaults to cmdb_ci_computer if left blank.',
+  GenericRest: 'For any REST API returning a JSON array of assets. Field names map JSON properties in each ' +
+    'item to ESAR asset fields — leave optional ones blank if the source does not provide them.',
 };
 
 function SettingFieldInput({ field, value, onChange }: {
