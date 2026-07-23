@@ -44,16 +44,140 @@ function ResetPasswordModal({ user, onClose, onDone, minPasswordLength }: {
   );
 }
 
+function EditUserModal({ user, roles, onClose, onDone }: {
+  user: any; roles: any[]; onClose: () => void; onDone: () => void;
+}) {
+  const [email, setEmail] = useState(user.email ?? '');
+  const [displayName, setDisplayName] = useState(user.displayName ?? '');
+  const [isActive, setIsActive] = useState(!!user.isActive);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(user.roles ?? []);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const toggleRole = (name: string) => {
+    setSelectedRoles((prev) => prev.includes(name) ? prev.filter((r) => r !== name) : [...prev, name]);
+  };
+
+  const submit = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      await client.put(`/users/${user.id}`, { email, displayName, isActive, roles: selectedRoles });
+      onDone();
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Failed to update user');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Edit user — ${user.username}`} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)}
+            style={{ width: 'auto' }} />
+          Active
+        </label>
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Roles</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {roles.map((r) => (
+              <label key={r.id} className="badge" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedRoles.includes(r.name)}
+                  onChange={() => toggleRole(r.name)} style={{ width: 'auto', marginRight: 6 }} />
+                {r.name}
+              </label>
+            ))}
+          </div>
+        </div>
+        {error && <div className="error">{error}</div>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button disabled={busy || !email || !displayName} onClick={submit}>
+            {busy ? 'Saving...' : 'Save changes'}
+          </button>
+          <button className="secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function RoleModal({ role, permissions, onClose, onDone }: {
+  role?: any; permissions: any[]; onClose: () => void; onDone: () => void;
+}) {
+  const [name, setName] = useState(role?.name ?? '');
+  const [description, setDescription] = useState(role?.description ?? '');
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>(role?.permissions ?? []);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const togglePermission = (code: string) => {
+    setSelectedPermissions((prev) =>
+      prev.includes(code) ? prev.filter((p) => p !== code) : [...prev, code]);
+  };
+
+  const submit = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      const payload = { name, description, permissions: selectedPermissions };
+      if (role) await client.put(`/roles/${role.id}`, payload);
+      else await client.post('/roles', payload);
+      onDone();
+    } catch (err: any) {
+      setError(err.response?.data?.error ?? 'Failed to save role');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={role ? `Edit role — ${role.name}` : 'New role'} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <input placeholder="Role name" value={name} disabled={!!role}
+          onChange={(e) => setName(e.target.value)} />
+        <input placeholder="Description" value={description}
+          onChange={(e) => setDescription(e.target.value)} />
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Permissions</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxHeight: 260, overflow: 'auto' }}>
+            {permissions.map((p) => (
+              <label key={p.id} className="badge" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedPermissions.includes(p.code)}
+                  onChange={() => togglePermission(p.code)} style={{ width: 'auto', marginRight: 6 }} />
+                {p.code}
+              </label>
+            ))}
+          </div>
+        </div>
+        {error && <div className="error">{error}</div>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button disabled={busy || !name || selectedPermissions.length === 0} onClick={submit}>
+            {busy ? 'Saving...' : 'Save role'}
+          </button>
+          <button className="secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Users() {
   const { userId: myUserId } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [permissions, setPermissions] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     username: '', email: '', displayName: '', password: '', provider: 'Local', role: 'Viewer',
   });
   const [error, setError] = useState('');
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null);
+  const [editUser, setEditUser] = useState<any | null>(null);
+  const [roleModal, setRoleModal] = useState<any | 'new' | null>(null);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
   const [minPasswordLength, setMinPasswordLength] = useState(12);
@@ -61,6 +185,7 @@ export default function Users() {
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
     client.get('/roles').then((r) => setRoles(r.data));
+    client.get('/roles/permissions').then((r) => setPermissions(r.data));
     client.get('/auth/config')
       .then((r) => {
         const value = Number(r.data?.minPasswordLength);
@@ -231,6 +356,7 @@ export default function Users() {
                         {u.provider === 'Local' && isLocked && (
                           <button className="secondary" onClick={() => unlockUser(u)}>Unlock</button>
                         )}
+                        <button className="secondary" onClick={() => setEditUser(u)}>Edit</button>
                         <button className="secondary" onClick={() => toggleActive(u)}>
                           {u.isActive ? 'Deactivate' : 'Activate'}
                         </button>
@@ -250,6 +376,10 @@ export default function Users() {
 
       <h2 className="section-title">Roles</h2>
       <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+          <h3>Role definitions</h3>
+          <button onClick={() => setRoleModal('new')}>New role</button>
+        </div>
         <table className="data">
           <thead><tr><th>Role</th><th>Description</th><th>Permissions</th><th></th></tr></thead>
           <tbody>
@@ -261,7 +391,12 @@ export default function Users() {
                 <td>
                   {r.isSystem
                     ? <span className="muted" style={{ fontSize: 12 }}>built-in</span>
-                    : <button className="danger" onClick={() => removeRole(r.id, r.name)}>Delete</button>}
+                    : (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button className="secondary" onClick={() => setRoleModal(r)}>Edit</button>
+                        <button className="danger" onClick={() => removeRole(r.id, r.name)}>Delete</button>
+                      </div>
+                    )}
                 </td>
               </tr>
             ))}
@@ -275,6 +410,22 @@ export default function Users() {
           onClose={() => setResetUser(null)}
           onDone={() => { setNotice(`Password reset for ${resetUser.username}.`); setResetUser(null); load(); }}
           minPasswordLength={minPasswordLength}
+        />
+      )}
+      {editUser && (
+        <EditUserModal
+          user={editUser}
+          roles={roles}
+          onClose={() => setEditUser(null)}
+          onDone={() => { setNotice(`Updated ${editUser.username}.`); setEditUser(null); load(); }}
+        />
+      )}
+      {roleModal && (
+        <RoleModal
+          role={roleModal === 'new' ? undefined : roleModal}
+          permissions={permissions}
+          onClose={() => setRoleModal(null)}
+          onDone={() => { setNotice('Role saved.'); setRoleModal(null); load(); }}
         />
       )}
     </>

@@ -83,6 +83,23 @@ public class AuthSecuritySettingsTests
     }
 
     [Fact]
+    public async Task Login_never_locks_protected_bootstrap_admin()
+    {
+        _user = LocalUser();
+        _user.IsProtected = true;
+        _user.LockedOutUntil = DateTime.UtcNow.AddHours(1);
+        Set(SettingKeys.SecurityLoginMaxFailedAttempts, "1");
+        Set(SettingKeys.SecurityLoginLockoutMinutes, "30");
+        _hasher.Setup(h => h.Verify("bad-password", _user.PasswordHash!)).Returns(false);
+
+        var result = await Sut.LoginAsync(_user.Username, "bad-password");
+
+        result.Error.Should().Be("Invalid credentials");
+        _user.LockedOutUntil.Should().BeNull();
+        _user.FailedLoginAttempts.Should().Be(1);
+    }
+
+    [Fact]
     public async Task ChangePassword_uses_configured_minimum_password_length()
     {
         _user = LocalUser();

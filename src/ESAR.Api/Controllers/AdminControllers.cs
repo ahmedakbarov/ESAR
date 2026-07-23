@@ -90,7 +90,8 @@ public class UsersController : ControllerBase
         return Ok(new { user.Id, user.Username });
     }
 
-    public record UpdateUserRequest(string? DisplayName, bool? IsActive, List<string>? Roles, string? NewPassword);
+    public record UpdateUserRequest(string? Email, string? DisplayName, bool? IsActive, List<string>? Roles,
+        string? NewPassword);
 
     [HttpPut("{id:guid}")]
     [Authorize("users.manage")]
@@ -101,7 +102,18 @@ public class UsersController : ControllerBase
         if (user.IsProtected)
             return BadRequest(new { error = "This is a protected account and cannot be modified. " +
                 "Its owner can change its own password from the top-bar account menu." });
-        if (request.DisplayName is not null) user.DisplayName = request.DisplayName;
+        if (request.Email is not null)
+        {
+            var email = request.Email.Trim();
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest(new { error = "Email is required." });
+            var existing = await _uow.Users.FirstOrDefaultAsync(
+                u => u.Id != id && u.Email.ToLower() == email.ToLower(), ct);
+            if (existing is not null)
+                return Conflict(new { error = "Email already exists." });
+            user.Email = email;
+        }
+        if (request.DisplayName is not null) user.DisplayName = request.DisplayName.Trim();
         if (request.IsActive is { } active) user.IsActive = active;
         if (!string.IsNullOrEmpty(request.NewPassword))
         {
