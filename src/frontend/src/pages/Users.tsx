@@ -163,11 +163,15 @@ export default function Users() {
             {users.map((u) => {
               const isSelf = !!myUserId && u.id === myUserId;
               const isLastManager = managerIds.length === 1 && managerIds[0] === u.id;
-              const blockReason = isSelf ? 'You cannot delete your own account.'
+              const deleteBlock = u.isProtected ? 'This is a protected account and cannot be deleted.'
+                : isSelf ? 'You cannot delete your own account.'
                 : isLastManager ? 'This is the last user with user-management permission.' : undefined;
               return (
                 <tr key={u.id}>
-                  <td>{u.username}</td>
+                  <td>
+                    {u.username}
+                    {u.isProtected && <> <span className="badge muted" title="Protected account — cannot be modified or deleted">protected</span></>}
+                  </td>
                   <td>{u.displayName}</td>
                   <td className="muted">{u.email}</td>
                   <td><Badge value={u.provider} /></td>
@@ -175,21 +179,25 @@ export default function Users() {
                   <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
                   <td className="muted">{formatDate(u.lastLoginAt)}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {u.provider === 'Local' && (
-                        <button className="secondary"
-                          onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
-                          Reset password
+                    {u.isProtected ? (
+                      <span className="muted" style={{ fontSize: 12 }}>protected</span>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {u.provider === 'Local' && (
+                          <button className="secondary"
+                            onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
+                            Reset password
+                          </button>
+                        )}
+                        <button className="secondary" onClick={() => toggleActive(u)}>
+                          {u.isActive ? 'Deactivate' : 'Activate'}
                         </button>
-                      )}
-                      <button className="secondary" onClick={() => toggleActive(u)}>
-                        {u.isActive ? 'Deactivate' : 'Activate'}
-                      </button>
-                      <button className="danger" disabled={!!blockReason} title={blockReason}
-                        onClick={() => removeUser(u.id, u.username)}>
-                        Delete
-                      </button>
-                    </div>
+                        <button className="danger" disabled={!!deleteBlock} title={deleteBlock}
+                          onClick={() => removeUser(u.id, u.username)}>
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

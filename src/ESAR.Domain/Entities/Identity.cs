@@ -14,6 +14,10 @@ public class User : AuditableEntity
     /// <summary>Object id in the external identity provider.</summary>
     public string? ExternalObjectId { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Break-glass bootstrap account: protected from admin-side management actions
+    /// (deactivate, delete, role change, password reset by others). The owner can still rotate
+    /// their own password via self-service change-password.</summary>
+    public bool IsProtected { get; set; }
     public bool MfaEnabled { get; set; }
     public DateTime? LastLoginAt { get; set; }
     public int FailedLoginAttempts { get; set; }

@@ -40,7 +40,7 @@ public class UsersController : ControllerBase
         return Ok(users.Select(u => new
         {
             u.Id, u.Username, u.Email, u.DisplayName, Provider = u.AuthProvider.ToString(),
-            u.IsActive, u.MfaEnabled, u.LastLoginAt,
+            u.IsActive, u.IsProtected, u.MfaEnabled, u.LastLoginAt,
             Roles = userRoles.TryGetValue(u.Id, out var r) ? r : new List<string>()
         }));
     }
@@ -96,6 +96,9 @@ public class UsersController : ControllerBase
     {
         var user = await _uow.Users.GetByIdAsync(id, ct);
         if (user is null) return NotFound();
+        if (user.IsProtected)
+            return BadRequest(new { error = "This is a protected account and cannot be modified. " +
+                "Its owner can change its own password from the top-bar account menu." });
         if (request.DisplayName is not null) user.DisplayName = request.DisplayName;
         if (request.IsActive is { } active) user.IsActive = active;
         if (!string.IsNullOrEmpty(request.NewPassword))
@@ -131,6 +134,8 @@ public class UsersController : ControllerBase
     {
         var user = await _uow.Users.GetByIdAsync(id, ct);
         if (user is null) return NotFound();
+        if (user.IsProtected)
+            return BadRequest(new { error = "This is a protected account and cannot be deleted." });
         if (id == _currentUser.UserId) return BadRequest(new { error = "You cannot delete your own account." });
         if (await IsLastUserManagerAsync(id, ct))
             return BadRequest(new { error = "Cannot delete the last user with user-management permission." });
