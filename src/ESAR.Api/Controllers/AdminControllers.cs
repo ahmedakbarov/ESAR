@@ -1,6 +1,7 @@
 using Asp.Versioning;
 using Esar.Application.Abstractions;
 using Esar.Application.Auditing;
+using Esar.Application.Matching;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -54,8 +55,9 @@ public class UsersController : ControllerBase
     {
         if (request.Provider == AuthProvider.Local)
         {
-            if (string.IsNullOrEmpty(request.Password) || request.Password.Length < 12)
-                return BadRequest(new { error = "Password must be at least 12 characters." });
+            var minPasswordLength = await GetMinPasswordLengthAsync(ct);
+            if (string.IsNullOrEmpty(request.Password) || request.Password.Length < minPasswordLength)
+                return BadRequest(new { error = $"Password must be at least {minPasswordLength} characters." });
         }
         else if (!string.IsNullOrEmpty(request.Password))
         {
@@ -103,8 +105,9 @@ public class UsersController : ControllerBase
         if (request.IsActive is { } active) user.IsActive = active;
         if (!string.IsNullOrEmpty(request.NewPassword))
         {
-            if (request.NewPassword.Length < 12)
-                return BadRequest(new { error = "Password must be at least 12 characters." });
+            var minPasswordLength = await GetMinPasswordLengthAsync(ct);
+            if (request.NewPassword.Length < minPasswordLength)
+                return BadRequest(new { error = $"Password must be at least {minPasswordLength} characters." });
             user.PasswordHash = _hasher.Hash(request.NewPassword);
         }
         if (request.Roles is not null)
@@ -163,6 +166,13 @@ public class UsersController : ControllerBase
         var activeManagerCount = (await _uow.Users.ListAsync(
             u => u.IsActive && managerUserIds.Contains(u.Id), ct)).Count;
         return activeManagerCount <= 1 && managerUserIds.Contains(excludingUserId);
+    }
+
+    private async Task<int> GetMinPasswordLengthAsync(CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(
+            s => s.Key == SettingKeys.SecurityPasswordMinLength, ct);
+        return setting is not null && int.TryParse(setting.Value, out var value) && value > 0 ? value : 12;
     }
 }
 
@@ -345,6 +355,9 @@ public class SettingsController : ControllerBase
     {
         var setting = await _uow.Settings.FirstOrDefaultAsync(s => s.Key == key, ct);
         if (setting is null) return NotFound();
+        if (RequiresPositiveInteger(key) &&
+            (!int.TryParse(update.Value, out var numericValue) || numericValue <= 0))
+            return BadRequest(new { error = "Value must be a positive whole number." });
         setting.Value = update.Value;
         setting.UpdatedBy = _user.UserName;
         setting.UpdatedAt = DateTime.UtcNow;
@@ -382,4 +395,12 @@ public class SettingsController : ControllerBase
         await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(SourcePriority), id.ToString(), update, ct);
         return Ok(new { priority.Id, priority.Priority });
     }
+
+    private static bool RequiresPositiveInteger(string key) =>
+        key == SettingKeys.SecurityPasswordMinLength ||
+        key == SettingKeys.SecurityLoginMaxFailedAttempts ||
+        key == SettingKeys.SecurityLoginLockoutMinutes ||
+        key == SettingKeys.SecuritySessionTokenLifetimeMinutes ||
+        key == SettingKeys.SecuritySessionIdleTimeoutMinutes ||
+        key == SettingKeys.SecurityAuditRetentionDays;
 }

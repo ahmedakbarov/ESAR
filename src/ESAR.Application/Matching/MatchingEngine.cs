@@ -289,4 +289,10 @@ public static class SettingKeys
     public const string AuthFederatedAutoProvision = "auth.federated.autoProvision";
     public const string AuthEntraTenantId = "auth.entra.tenantId";
     public const string AuthEntraClientId = "auth.entra.clientId";
+    public const string SecurityPasswordMinLength = "security.password.minLength";
+    public const string SecurityLoginMaxFailedAttempts = "security.login.maxFailedAttempts";
+    public const string SecurityLoginLockoutMinutes = "security.login.lockoutMinutes";
+    public const string SecuritySessionTokenLifetimeMinutes = "security.session.tokenLifetimeMinutes";
+    public const string SecuritySessionIdleTimeoutMinutes = "security.session.idleTimeoutMinutes";
+    public const string SecurityAuditRetentionDays = "security.audit.retentionDays";
 }

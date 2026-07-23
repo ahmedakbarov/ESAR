@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import client from '../api/client';
 
 interface AuthState {
@@ -66,6 +66,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRoles([]);
     setUserId(null);
   };
+
+  useEffect(() => {
+    if (!token) return;
+
+    let timeoutId: number | undefined;
+    let idleMinutes = 30;
+    const events = ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'];
+
+    const resetTimer = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(logout, idleMinutes * 60 * 1000);
+    };
+
+    client.get('/auth/config')
+      .then((r) => {
+        const value = Number(r.data?.idleTimeoutMinutes);
+        if (value > 0) idleMinutes = value;
+      })
+      .finally(resetTimer);
+
+    events.forEach((event) => window.addEventListener(event, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [token]);
 
   return (
     <AuthContext.Provider value={{ token, displayName, roles, userId, login, loginWithEntra, loginWithLdap, logout }}>

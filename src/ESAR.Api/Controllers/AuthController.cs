@@ -88,6 +88,8 @@ public class AuthController : ControllerBase
     {
         var entraTenantId = (await _uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraTenantId, ct))?.Value;
         var entraClientId = (await _uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraClientId, ct))?.Value;
+        var idleTimeoutMinutes = await GetIntSettingAsync(
+            SettingKeys.SecuritySessionIdleTimeoutMinutes, fallback: 30, ct);
         var entraEnabled = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraClientId);
         var ldapEnabled = await _uow.Connectors.FirstOrDefaultAsync(
             c => c.Type == ConnectorType.ActiveDirectory && c.Enabled, ct) is not null;
@@ -95,6 +97,7 @@ public class AuthController : ControllerBase
         {
             entraEnabled,
             ldapEnabled,
+            idleTimeoutMinutes,
             entraTenantId = entraEnabled ? entraTenantId : null,
             entraClientId = entraEnabled ? entraClientId : null
         });
@@ -127,5 +130,13 @@ public class AuthController : ControllerBase
         var result = await _auth.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
         if (!result.Success) return BadRequest(new { error = result.Error });
         return NoContent();
+    }
+
+    private async Task<int> GetIntSettingAsync(string key, int fallback, CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(s => s.Key == key, ct);
+        if (setting is null || !int.TryParse(setting.Value, out var value) || value <= 0)
+            return fallback;
+        return value;
     }
 }
