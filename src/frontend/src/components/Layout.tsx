@@ -14,10 +14,9 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   const [minLength, setMinLength] = useState(12);
 
   useEffect(() => {
-    client.get('/settings')
+    client.get('/auth/config')
       .then((r) => {
-        const setting = r.data?.find((s: any) => s.key === 'security.password.minLength');
-        const value = Number(setting?.value);
+        const value = Number(r.data?.minPasswordLength);
         if (value > 0) setMinLength(value);
       })
       .catch(() => undefined);
