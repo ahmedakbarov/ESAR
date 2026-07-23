@@ -181,6 +181,10 @@ public static class DbSeeder
         {
             (SettingKeys.MatchAutoMergeThreshold, "0.85", "Soft-match score required for automatic merge"),
             (SettingKeys.MatchReviewThreshold, "0.60", "Soft-match score required to queue for manual review"),
+            (SettingKeys.MatchAmbiguityDelta, "0.10",
+                "Minimum score gap required between the best and second-best automatic match candidates"),
+            (SettingKeys.MatchNetworkEvidenceMaxAgeDays, "30",
+                "Maximum age in days for IP and MAC observations used as matching evidence"),
             (SettingKeys.StaleAssetDays, "7", "Days without telemetry before an asset is marked Offline"),
             (SettingKeys.DecommissionAfterDays, "90", "Days without telemetry before automatic decommission"),
             (SettingKeys.ComplianceEvidenceMaxAgeDays, "7", "Max age of source evidence for compliance controls"),

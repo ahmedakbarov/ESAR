@@ -1,3 +1,4 @@
+using System.Globalization;
 using Asp.Versioning;
 using Esar.Application.Abstractions;
 using Esar.Application.Auditing;
@@ -389,6 +390,41 @@ public class SettingsController : ControllerBase
         if (RequiresPositiveInteger(key) &&
             (!int.TryParse(update.Value, out var numericValue) || numericValue <= 0))
             return BadRequest(new { error = "Value must be a positive whole number." });
+        if (key is SettingKeys.MatchAutoMergeThreshold or SettingKeys.MatchReviewThreshold
+            or SettingKeys.MatchAmbiguityDelta)
+        {
+            if (!decimal.TryParse(update.Value, NumberStyles.Number, CultureInfo.InvariantCulture,
+                    out var threshold) || threshold is < 0 or > 1)
+                return BadRequest(new { error = "Matching thresholds must be decimal values between 0 and 1." });
+
+            if (key == SettingKeys.MatchAmbiguityDelta)
+            {
+                setting.Value = update.Value;
+                setting.UpdatedBy = _user.UserName;
+                setting.UpdatedAt = DateTime.UtcNow;
+                _uow.Settings.Update(setting);
+                await _uow.SaveChangesAsync(ct);
+                await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(Setting), key, null, ct);
+                return Ok(new { setting.Key });
+            }
+
+            var otherKey = key == SettingKeys.MatchAutoMergeThreshold
+                ? SettingKeys.MatchReviewThreshold
+                : SettingKeys.MatchAutoMergeThreshold;
+            var other = await _uow.Settings.FirstOrDefaultAsync(s => s.Key == otherKey, ct);
+            if (other is not null &&
+                decimal.TryParse(other.Value, NumberStyles.Number, CultureInfo.InvariantCulture,
+                    out var otherThreshold))
+            {
+                var autoMerge = key == SettingKeys.MatchAutoMergeThreshold ? threshold : otherThreshold;
+                var review = key == SettingKeys.MatchReviewThreshold ? threshold : otherThreshold;
+                if (review > autoMerge)
+                    return BadRequest(new
+                    {
+                        error = "Review threshold cannot be greater than the automatic merge threshold."
+                    });
+            }
+        }
         setting.Value = update.Value;
         setting.UpdatedBy = _user.UserName;
         setting.UpdatedAt = DateTime.UtcNow;
@@ -418,6 +454,8 @@ public class SettingsController : ControllerBase
     {
         var priority = await _uow.SourcePriorities.GetByIdAsync(id, ct);
         if (priority is null) return NotFound();
+        if (update.Priority <= 0)
+            return BadRequest(new { error = "Priority must be a positive whole number." });
         priority.Priority = update.Priority;
         priority.UpdatedAt = DateTime.UtcNow;
         _uow.SourcePriorities.Update(priority);
@@ -433,5 +471,6 @@ public class SettingsController : ControllerBase
         key == SettingKeys.SecurityLoginLockoutMinutes ||
         key == SettingKeys.SecuritySessionTokenLifetimeMinutes ||
         key == SettingKeys.SecuritySessionIdleTimeoutMinutes ||
-        key == SettingKeys.SecurityAuditRetentionDays;
+        key == SettingKeys.SecurityAuditRetentionDays ||
+        key == SettingKeys.MatchNetworkEvidenceMaxAgeDays;
 }

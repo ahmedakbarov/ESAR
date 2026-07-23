@@ -7,6 +7,7 @@ using Esar.Application.Matching;
 using Esar.Application.Merging;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using MatchType = Esar.Domain.Enums.MatchType;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -116,5 +117,52 @@ public class AssetIngestionServiceTests
         _matching.Verify(engine => engine.MatchAsync(It.IsAny<DiscoveredAsset>(), It.IsAny<CancellationToken>()), Times.Never);
         _audit.Verify(audit => audit.LogAsync(AuditAction.AssetReactivated, nameof(Asset), deletedAsset.Id.ToString(),
             It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Repeated_ambiguous_sync_updates_existing_review_instead_of_adding_duplicate()
+    {
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.Tenable,
+            ExternalId = "tenable-asset-1",
+            Hostname = "shared-host"
+        };
+        var matched = new Asset { Hostname = "shared-host", NormalizedHostname = "shared-host" };
+        var pending = new MatchRecord
+        {
+            SourceConnector = incoming.Source,
+            ExternalId = incoming.ExternalId,
+            Decision = MatchDecision.QueuedForReview,
+            ConfidenceScore = 0.40m
+        };
+
+        _assets.Setup(repository => repository.FindBySourceAsync(
+                incoming.Source, incoming.ExternalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(repository => repository.FindDeletedBySourceAsync(
+                incoming.Source, incoming.ExternalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _matching.Setup(engine => engine.MatchAsync(incoming, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MatchResult
+            {
+                Decision = MatchDecision.QueuedForReview,
+                MatchedAsset = matched,
+                ConfidenceScore = 0.55m,
+                MatchType = MatchType.Soft
+            });
+        _matchRecords.Setup(repository => repository.FirstOrDefaultAsync(
+                It.IsAny<System.Linq.Expressions.Expression<Func<MatchRecord, bool>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pending);
+
+        var outcome = await _sut.IngestAsync(incoming);
+
+        outcome.Should().Be(IngestionOutcome.QueuedForReview);
+        pending.ConfidenceScore.Should().Be(0.55m);
+        pending.MatchedAssetId.Should().Be(matched.Id);
+        _matchRecords.Verify(repository => repository.AddAsync(
+            It.IsAny<MatchRecord>(), It.IsAny<CancellationToken>()), Times.Never);
+        _matchRecords.Verify(repository => repository.Update(pending), Times.Once);
     }
 }

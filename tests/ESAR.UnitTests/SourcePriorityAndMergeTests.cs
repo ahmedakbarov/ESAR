@@ -227,4 +227,92 @@ public class MergeEngineTests
             It.Is<AssetTag>(tag => tag.AssetId == asset.Id && tag.Key == "public_ip" && tag.Source == ConnectorType.Azure),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task Same_ip_from_different_sources_keeps_separate_provenance()
+    {
+        var asset = new Asset
+        {
+            IpAddresses =
+            {
+                new AssetIp
+                {
+                    IpAddress = "10.0.0.4",
+                    MacAddress = "00:11:22:33:44:55",
+                    Source = ConnectorType.Azure,
+                    LastSeen = DateTime.UtcNow.AddMinutes(-5)
+                }
+            }
+        };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.ActiveDirectory,
+            ExternalId = "CN=vm01,DC=esar,DC=local",
+            SeenAt = DateTime.UtcNow,
+            Interfaces = { new DiscoveredInterface { IpAddress = "10.0.0.4", IsPrimary = true } }
+        };
+
+        await _sut.ApplyAsync(asset, incoming);
+
+        asset.IpAddresses.Should().HaveCount(2);
+        asset.IpAddresses.Should().ContainSingle(network =>
+            network.Source == ConnectorType.Azure && network.MacAddress == "00:11:22:33:44:55");
+        asset.IpAddresses.Should().ContainSingle(network =>
+            network.Source == ConnectorType.ActiveDirectory && network.IpAddress == "10.0.0.4");
+    }
+
+    [Fact]
+    public async Task Connector_cannot_overwrite_manually_owned_attribute()
+    {
+        var asset = new Asset
+        {
+            OwnerName = "SOC Team",
+            AttributeSourcesJson = """{"OwnerName":"Manual"}"""
+        };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-vm-1",
+            OwnerName = "Tag Owner"
+        };
+
+        await _sut.ApplyAsync(asset, incoming);
+
+        asset.OwnerName.Should().Be("SOC Team");
+        _priority.Verify(priority => priority.WinsAsync(
+            It.IsAny<ConnectorType>(), It.IsAny<ConnectorType?>(), nameof(Asset.OwnerName),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Merge_assets_fills_missing_metadata_and_moves_software()
+    {
+        var survivor = new Asset { Hostname = "vm01", NormalizedHostname = "vm01" };
+        var duplicate = new Asset
+        {
+            Hostname = "vm01-old",
+            NormalizedHostname = "vm01-old",
+            OperatingSystem = "Windows Server 2022",
+            OwnerName = "Infrastructure",
+            AttributeSourcesJson = """{"OperatingSystem":"MicrosoftDefender","OwnerName":"ServiceNowCmdb"}""",
+            Software =
+            {
+                new AssetSoftware
+                {
+                    Name = "Defender Agent",
+                    Version = "1.0",
+                    Source = ConnectorType.MicrosoftDefender
+                }
+            }
+        };
+
+        await _sut.MergeAssetsAsync(survivor, duplicate, "reviewer");
+
+        survivor.OperatingSystem.Should().Be("Windows Server 2022");
+        survivor.OwnerName.Should().Be("Infrastructure");
+        survivor.Software.Should().ContainSingle(software =>
+            software.Name == "Defender Agent" && software.AssetId == survivor.Id);
+        survivor.AttributeSourcesJson.Should().Contain("MicrosoftDefender");
+        duplicate.IsDeleted.Should().BeTrue();
+    }
 }
