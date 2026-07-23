@@ -9,6 +9,7 @@ interface ConnectorForm {
   enabled: boolean;
   cronSchedule: string;
   priority: number;
+  maxRetries: number;
   rateLimitPerMinute: number;
   defaultSyncMode: string;
   settingsText: string; // key=value per line — fallback editor for types without a field layout below
@@ -17,9 +18,38 @@ interface ConnectorForm {
 
 const emptyConnector: ConnectorForm = {
   name: '', type: 'ActiveDirectory', enabled: true, cronSchedule: '0 */4 * * *',
-  priority: 100, rateLimitPerMinute: 300, defaultSyncMode: 'Incremental',
+  priority: 100, maxRetries: 3, rateLimitPerMinute: 300, defaultSyncMode: 'Incremental',
   settingsText: '', settingsFields: {},
 };
+
+const SCHEDULE_PRESETS = [
+  { label: 'Every 15 minutes', value: '*/15 * * * *' },
+  { label: 'Every 30 minutes', value: '*/30 * * * *' },
+  { label: 'Every hour', value: '0 * * * *' },
+  { label: 'Every 4 hours', value: '0 */4 * * *' },
+  { label: 'Every 6 hours', value: '0 */6 * * *' },
+  { label: 'Daily at 02:00', value: '0 2 * * *' },
+  { label: 'Manual only', value: '' },
+  { label: 'Custom cron', value: '__custom__' },
+];
+
+function schedulePresetValue(cron: string) {
+  return SCHEDULE_PRESETS.some((p) => p.value === cron && p.value !== '__custom__') ? cron : '__custom__';
+}
+
+function describeSchedule(cron: string) {
+  if (!cron.trim()) return 'Runs only when you click Sync now.';
+  const preset = SCHEDULE_PRESETS.find((p) => p.value === cron);
+  return preset && preset.value !== '__custom__'
+    ? `Scheduled sync: ${preset.label.toLowerCase()}.`
+    : 'Custom cron expression. Use five-field cron syntax: minute hour day month weekday.';
+}
+
+function scheduleLabel(cron: string) {
+  if (!cron.trim()) return 'Manual only';
+  const preset = SCHEDULE_PRESETS.find((p) => p.value === cron && p.value !== '__custom__');
+  return preset?.label ?? 'Custom schedule';
+}
 
 function parseSettings(text: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -201,6 +231,7 @@ export default function Connectors() {
       enabled: form.enabled,
       cronSchedule: form.cronSchedule,
       priority: form.priority,
+      maxRetries: form.maxRetries,
       rateLimitPerMinute: form.rateLimitPerMinute,
       defaultSyncMode: form.defaultSyncMode,
       settings,
@@ -261,28 +292,102 @@ export default function Connectors() {
 
       {form && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="filters">
-            <input placeholder="Name" value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ width: 200 }} />
-            <select value={form.type} disabled={!!form.id}
-              onChange={(e) => setForm({ ...form, type: e.target.value, settingsFields: {}, settingsText: '' })}>
-              {types.map((t) => <option key={t}>{t}</option>)}
-            </select>
-            <input placeholder="Cron schedule" value={form.cronSchedule} title="Cron schedule"
-              onChange={(e) => setForm({ ...form, cronSchedule: e.target.value })} style={{ width: 130 }} />
-            <input type="number" title="Priority" value={form.priority}
-              onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })} style={{ width: 80 }} />
-            <input type="number" title="Rate limit / minute" value={form.rateLimitPerMinute}
-              onChange={(e) => setForm({ ...form, rateLimitPerMinute: Number(e.target.value) })} style={{ width: 90 }} />
-            <select value={form.defaultSyncMode}
-              onChange={(e) => setForm({ ...form, defaultSyncMode: e.target.value })}>
-              <option>Incremental</option>
-              <option>Full</option>
-            </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <input type="checkbox" checked={form.enabled}
-                onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Enabled
-            </label>
+          <div className="grid cols-3">
+            <div className="card">
+              <h3>Basic</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Connector name</label>
+                  <input placeholder="Example: AD production" value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    style={{ width: '100%', marginTop: 3 }} />
+                </div>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Connector type</label>
+                  <select value={form.type} disabled={!!form.id}
+                    onChange={(e) => setForm({ ...form, type: e.target.value, settingsFields: {}, settingsText: '' })}
+                    style={{ width: '100%', marginTop: 3 }}>
+                    {types.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={form.enabled}
+                    onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+                  Enabled for scheduled sync
+                </label>
+              </div>
+            </div>
+
+            <div className="card">
+              <h3>Schedule</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>How often should it run?</label>
+                  <select value={schedulePresetValue(form.cronSchedule)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '__custom__') setForm({ ...form, cronSchedule: form.cronSchedule || '0 */4 * * *' });
+                      else setForm({ ...form, cronSchedule: value });
+                    }}
+                    style={{ width: '100%', marginTop: 3 }}>
+                    {SCHEDULE_PRESETS.map((p) => <option key={p.label} value={p.value}>{p.label}</option>)}
+                  </select>
+                </div>
+                {schedulePresetValue(form.cronSchedule) === '__custom__' && (
+                  <div>
+                    <label className="muted" style={{ fontSize: 12 }}>Cron expression</label>
+                    <input placeholder="0 */4 * * *" value={form.cronSchedule}
+                      onChange={(e) => setForm({ ...form, cronSchedule: e.target.value })}
+                      style={{ width: '100%', marginTop: 3 }} />
+                  </div>
+                )}
+                <p className="muted" style={{ fontSize: 12, lineHeight: 1.4, margin: 0 }}>
+                  {describeSchedule(form.cronSchedule)}
+                </p>
+              </div>
+            </div>
+
+            <div className="card">
+              <h3>Execution</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Default sync mode</label>
+                  <select value={form.defaultSyncMode}
+                    onChange={(e) => setForm({ ...form, defaultSyncMode: e.target.value })}
+                    style={{ width: '100%', marginTop: 3 }}>
+                    <option value="Incremental">Incremental - only recent changes</option>
+                    <option value="Full">Full - rescan everything</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Source priority</label>
+                  <input type="number" value={form.priority}
+                    onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })}
+                    style={{ width: '100%', marginTop: 3 }} />
+                  <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    Lower number wins when sources disagree. Typical: Azure 10, AD 60, scanners 100+.
+                  </p>
+                </div>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Retry attempts</label>
+                  <input type="number" min={0} value={form.maxRetries}
+                    onChange={(e) => setForm({ ...form, maxRetries: Number(e.target.value) })}
+                    style={{ width: '100%', marginTop: 3 }} />
+                  <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    How many times ESAR retries temporary connector/API failures.
+                  </p>
+                </div>
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Rate limit per minute</label>
+                  <input type="number" value={form.rateLimitPerMinute}
+                    onChange={(e) => setForm({ ...form, rateLimitPerMinute: Number(e.target.value) })}
+                    style={{ width: '100%', marginTop: 3 }} />
+                  <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    Maximum requests per minute sent to the source API.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           {CONNECTOR_HELP[form.type] && (
@@ -336,7 +441,10 @@ export default function Connectors() {
                 <td><a href="#" onClick={(e) => { e.preventDefault(); toggleJobs(c.id); }}>{c.name}</a></td>
                 <td><Badge value={c.type} /></td>
                 <td>{c.enabled ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
-                <td className="muted">{c.cronSchedule}</td>
+                <td>
+                  <div>{scheduleLabel(c.cronSchedule ?? '')}</div>
+                  {c.cronSchedule && <div className="muted" style={{ fontSize: 11 }}>{c.cronSchedule}</div>}
+                </td>
                 <td>
                   {c.isHealthy ? <Badge value="Compliant" /> : <Badge value="Failed" />}
                   {!c.isHealthy && <div className="muted" style={{ fontSize: 11 }}>{c.lastHealthMessage}</div>}
@@ -354,7 +462,8 @@ export default function Connectors() {
                   <button className="secondary" onClick={() => setForm({
                     id: c.id, name: c.name, type: c.type, enabled: c.enabled,
                     cronSchedule: c.cronSchedule, priority: c.priority,
-                    rateLimitPerMinute: c.rateLimitPerMinute, defaultSyncMode: c.defaultSyncMode,
+                    maxRetries: c.maxRetries ?? 3, rateLimitPerMinute: c.rateLimitPerMinute,
+                    defaultSyncMode: c.defaultSyncMode,
                     settingsText: Object.entries(c.settings ?? {})
                       .map(([k, v]) => `${k}=${v}`).join('\n'),
                     settingsFields: { ...(c.settings ?? {}) },
