@@ -76,15 +76,23 @@ export default function Layout() {
           <div className="section">Operations</div>
           <NavLink to="/matching">Matching</NavLink>
           <NavLink to="/approvals">Approvals</NavLink>
-          <NavLink to="/connectors">Connectors</NavLink>
+          <NavLink to="/settings/integrations">Connectors</NavLink>
           <NavLink to="/incidents">Incidents</NavLink>
           <NavLink to="/reports">Reports</NavLink>
           <div className="section">Governance</div>
           <NavLink to="/policies">Policies</NavLink>
           <div className="section">Administration</div>
-          <NavLink to="/audit">Audit Logs</NavLink>
-          <NavLink to="/users">Users &amp; Roles</NavLink>
           <NavLink to="/settings">Settings</NavLink>
+          <div className="sidebar-subnav">
+            <NavLink to="/settings/security">Security</NavLink>
+            <NavLink to="/settings/system">System</NavLink>
+            <NavLink to="/settings/users-roles">Users &amp; Roles</NavLink>
+            <NavLink to="/settings/authentication">Authentication</NavLink>
+            <NavLink to="/settings/integrations">Integrations</NavLink>
+            <NavLink to="/settings/sources">Sources</NavLink>
+            <NavLink to="/settings/priorities">Priorities</NavLink>
+            <NavLink to="/settings/audit">Audit Logs</NavLink>
+          </div>
         </nav>
       </aside>
       <main className="main">

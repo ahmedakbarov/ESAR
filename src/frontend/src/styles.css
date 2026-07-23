@@ -32,6 +32,14 @@ a { color: var(--accent); text-decoration: none; }
 .sidebar nav a:hover { color: var(--text); background: var(--panel-2); }
 .sidebar nav a.active { color: var(--text); border-left-color: var(--accent); background: var(--panel-2); }
 .sidebar .section { padding: 14px 20px 6px; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.sidebar-subnav a {
+  padding: 7px 20px 7px 34px; font-size: 12px; border-left-width: 3px;
+}
+.sidebar-subnav a::before {
+  content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--border); margin-right: 8px; vertical-align: 2px;
+}
+.sidebar-subnav a.active::before { background: var(--accent); }
 
 .main { flex: 1; margin-left: 230px; padding: 24px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
@@ -105,6 +113,33 @@ input:focus, select:focus { border-color: var(--accent); }
 .muted { color: var(--muted); }
 
 /* Settings page */
+.settings-shell {
+  display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start;
+}
+.settings-nav {
+  position: sticky; top: 24px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px;
+}
+.settings-nav h2 { font-size: 16px; margin-bottom: 2px; }
+.settings-nav p { font-size: 12px; margin-bottom: 12px; }
+.settings-nav a {
+  display: block; padding: 10px 11px; border-radius: 8px; color: var(--muted);
+  border: 1px solid transparent; margin-bottom: 6px;
+}
+.settings-nav a:hover { color: var(--text); background: var(--panel-2); }
+.settings-nav a.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+.settings-nav a span { display: block; font-weight: 700; }
+.settings-nav a small {
+  display: block; color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.3;
+}
+.settings-content { min-width: 0; }
+.settings-content h2 { font-size: 18px; margin-bottom: 5px; }
+.settings-empty {
+  background: var(--panel); border: 1px dashed var(--border); border-radius: var(--radius);
+  padding: 16px; color: var(--muted); line-height: 1.5;
+}
+.settings-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.settings-cards .card p { line-height: 1.5; }
 .settings-toolbar {
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
@@ -128,6 +163,18 @@ input:focus, select:focus { border-color: var(--accent); }
 .setting-row .control .status { font-size: 12px; min-width: 46px; text-align: right; }
 .setting-row .control .status.ok { color: var(--green); }
 .setting-row .control .status.err { color: var(--red); }
+@media (max-width: 1180px) {
+  .settings-shell { grid-template-columns: 1fr; }
+  .settings-nav { position: static; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .settings-nav > div { grid-column: 1 / -1; }
+  .settings-nav a { margin-bottom: 0; }
+  .settings-cards { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .setting-row { display: block; }
+  .setting-row .control { margin-top: 10px; flex-wrap: wrap; }
+  .settings-nav { grid-template-columns: 1fr; }
+}
 pre.json {
   background: var(--panel-2); padding: 12px; border-radius: 8px; overflow: auto;
   font-size: 12px; max-height: 300px;

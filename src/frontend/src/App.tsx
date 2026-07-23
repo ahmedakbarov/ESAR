@@ -14,7 +14,13 @@ import Incidents from './pages/Incidents';
 import Reports from './pages/Reports';
 import Audit from './pages/Audit';
 import Users from './pages/Users';
-import Settings from './pages/Settings';
+import Settings, {
+  SettingsAuthentication,
+  SettingsPriorities,
+  SettingsSecurity,
+  SettingsSources,
+  SettingsSystem,
+} from './pages/Settings';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { token } = useAuth();
@@ -41,14 +47,24 @@ export default function App() {
           <Route path="assets/:id" element={<AssetDetail />} />
           <Route path="compliance" element={<Compliance />} />
           <Route path="matching" element={<Matching />} />
-          <Route path="connectors" element={<Connectors />} />
+          <Route path="connectors" element={<Navigate to="/settings/integrations" replace />} />
           <Route path="policies" element={<Policies />} />
           <Route path="approvals" element={<Approvals />} />
           <Route path="incidents" element={<Incidents />} />
           <Route path="reports" element={<Reports />} />
           <Route path="audit" element={<Audit />} />
-          <Route path="users" element={<Users />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="users" element={<Navigate to="/settings/users-roles" replace />} />
+          <Route path="settings" element={<Settings />}>
+            <Route index element={<Navigate to="system" replace />} />
+            <Route path="security" element={<SettingsSecurity />} />
+            <Route path="system" element={<SettingsSystem />} />
+            <Route path="users-roles" element={<Users />} />
+            <Route path="authentication" element={<SettingsAuthentication />} />
+            <Route path="integrations" element={<Connectors />} />
+            <Route path="sources" element={<SettingsSources />} />
+            <Route path="priorities" element={<SettingsPriorities />} />
+            <Route path="audit" element={<Audit />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
