@@ -57,6 +57,13 @@ public class AuthService : IAuthService
         if (user is null || !user.IsActive)
             return new LoginResult(false, null, null, "Invalid credentials");
 
+        if (user.IsProtected && user.LockedOutUntil is not null)
+        {
+            user.LockedOutUntil = null;
+            user.FailedLoginAttempts = 0;
+            _uow.Users.Update(user);
+        }
+
         if (user.LockedOutUntil is { } lockedUntil && lockedUntil > DateTime.UtcNow)
             return new LoginResult(false, null, null, "Account temporarily locked");
 
@@ -68,6 +75,13 @@ public class AuthService : IAuthService
         if (user.PasswordHash is null || !_hasher.Verify(password, user.PasswordHash))
         {
             user.FailedLoginAttempts++;
+            if (user.IsProtected)
+            {
+                _logger.LogWarning("Protected user {User} had a failed login attempt; lockout skipped", username);
+                _uow.Users.Update(user);
+                await _uow.SaveChangesAsync(ct);
+                return new LoginResult(false, null, null, "Invalid credentials");
+            }
             if (user.FailedLoginAttempts >= maxFailedAttempts)
             {
                 user.LockedOutUntil = DateTime.UtcNow.AddMinutes(lockoutMinutes);
