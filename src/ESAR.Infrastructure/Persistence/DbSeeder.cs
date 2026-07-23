@@ -180,7 +180,12 @@ public static class DbSeeder
             ("dataquality.alertBelowScore", "50", "Publish DataQualityDegraded event when an asset scores below this"),
             (SettingKeys.AuthFederatedAutoProvision, "false",
                 "When true, a first successful Entra ID/AD login auto-creates an ESAR account (Viewer role) " +
-                "for identities with no pre-provisioned or previously-linked account")
+                "for identities with no pre-provisioned or previously-linked account"),
+            (SettingKeys.AuthEntraTenantId, "",
+                "Azure AD SSO — Directory (tenant) ID of your App Registration. Leave blank to disable " +
+                "'Sign in with Microsoft'."),
+            (SettingKeys.AuthEntraClientId, "",
+                "Azure AD SSO — Application (client) ID of your App Registration (Single-page application).")
         };
         foreach (var (key, value, description) in defaults)
         {

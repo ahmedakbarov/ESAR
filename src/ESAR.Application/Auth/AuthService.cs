@@ -80,9 +80,6 @@ public class AuthService : IAuthService
 
     public async Task<LoginResult> LoginWithEntraIdAsync(string idToken, CancellationToken ct = default)
     {
-        if (!_entra.IsConfigured)
-            return new LoginResult(false, null, null, "Entra ID SSO is not configured.");
-
         EntraTokenClaims claims;
         try
         {
@@ -91,7 +88,9 @@ public class AuthService : IAuthService
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Entra ID login: token validation failed");
-            return new LoginResult(false, null, null, "Invalid Entra ID token.");
+            // "not configured" vs "bad token" both surface generically — the frontend already
+            // hides the Microsoft button when /auth/config reports Entra as disabled.
+            return new LoginResult(false, null, null, "Entra ID sign-in failed.");
         }
 
         var user = await ResolveOrProvisionUserAsync(AuthProvider.EntraId, claims.ObjectId, claims.Email,

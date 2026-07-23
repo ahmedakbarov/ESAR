@@ -1,57 +1,47 @@
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Esar.Application.Abstractions;
-using Microsoft.Extensions.Options;
+using Esar.Application.Matching;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Esar.Infrastructure.Security;
 
-public class EntraIdOptions
-{
-    public string TenantId { get; set; } = string.Empty;
-    /// <summary>Client ID of the Azure AD App Registration (Single-page application platform).</summary>
-    public string ClientId { get; set; } = string.Empty;
-}
-
 /// <summary>
 /// Validates Entra ID-issued ID tokens by fetching Microsoft's own OIDC signing keys and checking
-/// the token's signature/issuer/audience/lifetime before trusting any of its claims — the same
-/// verification ASP.NET's JwtBearer middleware would do, just invoked manually so the result feeds
-/// ESAR's own token-exchange flow instead of the authentication pipeline directly.
+/// the token's signature/issuer/audience/lifetime before trusting any of its claims. Tenant and
+/// client IDs live in the Settings table (editable in the UI Settings page), read fresh on each
+/// call so an admin can change them without an app restart. The per-tenant ConfigurationManager
+/// (which caches Microsoft's signing keys) is memoized across calls since it is expensive to build.
 /// </summary>
 public class EntraTokenValidator : IEntraTokenValidator
 {
-    private readonly EntraIdOptions _options;
-    private readonly ConfigurationManager<OpenIdConnectConfiguration>? _configManager;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new();
 
-    public EntraTokenValidator(IOptions<EntraIdOptions> options)
-    {
-        _options = options.Value;
-        if (IsConfigured)
-        {
-            _configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
-                $"https://login.microsoftonline.com/{_options.TenantId}/v2.0/.well-known/openid-configuration",
-                new OpenIdConnectConfigurationRetriever(),
-                new HttpDocumentRetriever { RequireHttps = true });
-        }
-    }
-
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(_options.TenantId) && !string.IsNullOrWhiteSpace(_options.ClientId);
+    public EntraTokenValidator(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
 
     public async Task<EntraTokenClaims> ValidateAsync(string idToken, CancellationToken ct = default)
     {
-        if (!IsConfigured || _configManager is null)
+        var (tenantId, clientId) = await ReadConfigAsync(ct);
+        if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId))
             throw new InvalidOperationException("Entra ID SSO is not configured.");
 
-        var config = await _configManager.GetConfigurationAsync(ct);
+        var manager = _managers.GetOrAdd(tenantId, tid => new ConfigurationManager<OpenIdConnectConfiguration>(
+            $"https://login.microsoftonline.com/{tid}/v2.0/.well-known/openid-configuration",
+            new OpenIdConnectConfigurationRetriever(),
+            new HttpDocumentRetriever { RequireHttps = true }));
+
+        var config = await manager.GetConfigurationAsync(ct);
         var parameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidIssuer = config.Issuer,
             ValidateAudience = true,
-            ValidAudience = _options.ClientId,
+            ValidAudience = clientId,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(2),
             IssuerSigningKeys = config.SigningKeys
@@ -74,5 +64,14 @@ public class EntraTokenValidator : IEntraTokenValidator
         var displayName = principal.FindFirstValue("name") ?? email;
 
         return new EntraTokenClaims(objectId, email, displayName);
+    }
+
+    private async Task<(string? TenantId, string? ClientId)> ReadConfigAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var tenantId = (await uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraTenantId, ct))?.Value;
+        var clientId = (await uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraClientId, ct))?.Value;
+        return (tenantId, clientId);
     }
 }
