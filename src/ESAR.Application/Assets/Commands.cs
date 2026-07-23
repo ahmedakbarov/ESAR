@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Esar.Application.Abstractions;
 using Esar.Application.Auditing;
 using Esar.Application.Contracts;
@@ -109,6 +110,16 @@ public class UpdateAssetHandler : IRequestHandler<UpdateAssetCommand, AssetDto?>
         if (asset is null || asset.IsDeleted) return null;
 
         var changes = new List<AssetHistory>();
+        Dictionary<string, string> attributeOwners;
+        try
+        {
+            attributeOwners = JsonSerializer.Deserialize<Dictionary<string, string>>(asset.AttributeSourcesJson)
+                ?? new Dictionary<string, string>();
+        }
+        catch (JsonException)
+        {
+            attributeOwners = new Dictionary<string, string>();
+        }
         void Track(string field, string? oldValue, string? newValue)
         {
             if (newValue is null || oldValue == newValue) return;
@@ -117,6 +128,10 @@ public class UpdateAssetHandler : IRequestHandler<UpdateAssetCommand, AssetDto?>
                 AssetId = asset.Id, FieldName = field, OldValue = oldValue, NewValue = newValue,
                 ChangedBy = _user.UserName
             });
+            if (field is nameof(Asset.OwnerName) or nameof(Asset.OwnerEmail) or nameof(Asset.Department)
+                or nameof(Asset.BusinessUnit) or nameof(Asset.Location) or nameof(Asset.Classification)
+                or nameof(Asset.Environment) or nameof(Asset.Criticality))
+                attributeOwners[field] = "Manual";
         }
 
         Track(nameof(asset.OwnerName), asset.OwnerName, request.OwnerName);
@@ -166,6 +181,7 @@ public class UpdateAssetHandler : IRequestHandler<UpdateAssetCommand, AssetDto?>
 
         asset.UpdatedAt = DateTime.UtcNow;
         asset.UpdatedBy = _user.UserName;
+        asset.AttributeSourcesJson = JsonSerializer.Serialize(attributeOwners);
         _uow.Assets.Update(asset);
         await _uow.AssetHistories.AddRangeAsync(changes, ct);
         await _uow.SaveChangesAsync(ct);

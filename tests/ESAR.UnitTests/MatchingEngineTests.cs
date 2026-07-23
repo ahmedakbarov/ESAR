@@ -52,9 +52,9 @@ public class MatchingEngineTests
     public async Task Hard_identifier_match_returns_automerge_with_full_confidence()
     {
         var existing = new Asset { Hostname = "srv-db01", SerialNumber = "SN12345" };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(MatchAttributes.SerialNumber, "SN12345",
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(MatchAttributes.SerialNumber, "SN12345",
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existing);
+            .ReturnsAsync(new List<Asset> { existing });
 
         var candidate = new DiscoveredAsset
         {
@@ -83,9 +83,9 @@ public class MatchingEngineTests
             OperatingSystem = "Windows Server 2019",
             IpAddresses = { new AssetIp { IpAddress = "10.1.1.5", MacAddress = "00:1a:2b:3c:4d:5e" } }
         };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Asset?)null);
+            .ReturnsAsync(new List<Asset>());
         _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Asset> { existing });
@@ -117,9 +117,9 @@ public class MatchingEngineTests
             OperatingSystem = "Ubuntu Linux",
             IpAddresses = { new AssetIp { IpAddress = "10.1.1.5", MacAddress = "aa:bb:cc:dd:ee:ff" } }
         };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Asset?)null);
+            .ReturnsAsync(new List<Asset>());
         _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Asset> { existing });
@@ -147,9 +147,9 @@ public class MatchingEngineTests
         {
             IpAddresses = { new AssetIp { IpAddress = "10.1.1.5" } }
         };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Asset?)null);
+            .ReturnsAsync(new List<Asset>());
         _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Asset> { existing });
@@ -163,22 +163,22 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(1.0m);
+        result.ConfidenceScore.Should().Be(0.1579m);
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
         result.Explanations.Where(e => e.Matched).Should().ContainSingle(e => e.Attribute == MatchAttributes.IpAddress);
     }
 
     [Fact]
-    public async Task Ip_and_mac_match_can_auto_merge_when_threshold_is_met()
+    public async Task Ip_and_mac_below_absolute_threshold_is_queued_for_review()
     {
         var existing = new Asset
         {
             IpAddresses = { new AssetIp { IpAddress = "10.1.1.5", MacAddress = "00:1a:2b:3c:4d:5e" } }
         };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Asset?)null);
+            .ReturnsAsync(new List<Asset>());
         _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Asset> { existing });
@@ -192,13 +192,13 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(1.0m);
-        result.Decision.Should().Be(MatchDecision.AutoMerged);
+        result.ConfidenceScore.Should().Be(0.5263m);
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
     }
 
     [Fact]
-    public async Task Ip_and_hostname_match_can_auto_merge_when_threshold_is_met()
+    public async Task Ip_and_hostname_without_mac_is_queued_for_review()
     {
         var existing = new Asset
         {
@@ -206,9 +206,9 @@ public class MatchingEngineTests
             NormalizedHostname = "srv-web01",
             IpAddresses = { new AssetIp { IpAddress = "10.1.1.5" } }
         };
-        _assets.Setup(a => a.FindByHardIdentifierAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Asset?)null);
+            .ReturnsAsync(new List<Asset>());
         _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Asset> { existing });
@@ -223,8 +223,156 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(1.0m);
-        result.Decision.Should().Be(MatchDecision.AutoMerged);
+        result.ConfidenceScore.Should().Be(0.5789m);
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
+    }
+
+    [Fact]
+    public async Task Hostname_only_match_is_never_auto_merged()
+    {
+        var existing = new Asset { Hostname = "shared-name", NormalizedHostname = "shared-name" };
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset>());
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.MicrosoftDefender,
+            ExternalId = "endpoint-1",
+            Hostname = "SHARED-NAME"
+        });
+
+        result.ConfidenceScore.Should().BeLessThan(0.85m);
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.MatchedAsset.Should().BeSameAs(existing);
+    }
+
+    [Fact]
+    public async Task Equal_best_candidates_are_queued_as_ambiguous()
+    {
+        var first = new Asset
+        {
+            Hostname = "same-host",
+            NormalizedHostname = "same-host",
+            OperatingSystem = "Windows Server 2022",
+            IpAddresses = { new AssetIp { IpAddress = "10.1.2.3", MacAddress = "00:11:22:33:44:55" } }
+        };
+        var second = new Asset
+        {
+            Hostname = "same-host",
+            NormalizedHostname = "same-host",
+            OperatingSystem = "Windows Server 2022",
+            IpAddresses = { new AssetIp { IpAddress = "10.1.2.3", MacAddress = "00:11:22:33:44:55" } }
+        };
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset>());
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { first, second });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.MicrosoftDefender,
+            ExternalId = "endpoint-2",
+            Hostname = "same-host",
+            OperatingSystem = "Windows Server 2022",
+            Interfaces =
+            {
+                new DiscoveredInterface { IpAddress = "10.1.2.3", MacAddress = "00:11:22:33:44:55" }
+            }
+        });
+
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.Explanations.Should().Contain(explanation =>
+            explanation.Rule == "Ambiguous candidate safety policy");
+    }
+
+    [Fact]
+    public async Task Stale_network_observation_is_not_used_as_match_evidence()
+    {
+        var existing = new Asset
+        {
+            Hostname = "old-host",
+            NormalizedHostname = "old-host",
+            IpAddresses =
+            {
+                new AssetIp
+                {
+                    IpAddress = "10.8.8.8",
+                    MacAddress = "00:11:22:33:44:55",
+                    LastSeen = DateTime.UtcNow.AddDays(-45)
+                }
+            }
+        };
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset>());
+        _assets.Setup(a => a.FindSoftCandidatesAsync(It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.Tenable,
+            ExternalId = "scanner-1",
+            Hostname = "new-host",
+            Interfaces =
+            {
+                new DiscoveredInterface { IpAddress = "10.8.8.8", MacAddress = "00:11:22:33:44:55" }
+            }
+        });
+
+        result.Decision.Should().Be(MatchDecision.NewAsset);
+        result.MatchedAsset.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Hard_match_to_decommissioned_asset_requires_review()
+    {
+        var existing = new Asset
+        {
+            Hostname = "retired-host",
+            SerialNumber = "SERIAL-1",
+            Status = AssetStatus.Decommissioned
+        };
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(MatchAttributes.SerialNumber, "SERIAL-1",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { existing });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.Qualys,
+            ExternalId = "qualys-1",
+            Identifiers = { [MatchAttributes.SerialNumber] = "SERIAL-1" }
+        });
+
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.MatchedAsset.Should().BeSameAs(existing);
+    }
+
+    [Fact]
+    public async Task Duplicate_hard_identifier_requires_review_instead_of_arbitrary_merge()
+    {
+        var first = new Asset { Hostname = "server-a", SerialNumber = "DUPLICATE-SERIAL" };
+        var second = new Asset { Hostname = "server-b", SerialNumber = "DUPLICATE-SERIAL" };
+        _assets.Setup(a => a.FindHardIdentifierCandidatesAsync(
+                MatchAttributes.SerialNumber, "DUPLICATE-SERIAL", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { first, second });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.Qualys,
+            ExternalId = "qualys-duplicate",
+            Identifiers = { [MatchAttributes.SerialNumber] = "DUPLICATE-SERIAL" }
+        });
+
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.Explanations.Should().Contain(explanation =>
+            explanation.Rule == "Hard identifier conflict safety policy");
     }
 }

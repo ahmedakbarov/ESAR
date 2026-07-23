@@ -166,28 +166,39 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             .Where(a => a.IsDeleted && a.MergedIntoAssetId == null)
             .FirstOrDefaultAsync(a => a.Sources.Any(s => s.ConnectorType == connector && s.ExternalId == externalId), ct);
 
-    public Task<Asset?> FindByHardIdentifierAsync(string attribute, string value, CancellationToken ct = default)
+    public async Task<Asset?> FindByHardIdentifierAsync(string attribute, string value,
+        CancellationToken ct = default)
+        => (await FindHardIdentifierCandidatesAsync(attribute, value, ct)).FirstOrDefault();
+
+    public Task<List<Asset>> FindHardIdentifierCandidatesAsync(string attribute, string value,
+        CancellationToken ct = default)
     {
         var q = Detailed.Where(a => a.MergedIntoAssetId == null);
         return attribute switch
         {
-            MatchAttributes.AzureResourceId => q.FirstOrDefaultAsync(a =>
+            MatchAttributes.AzureResourceId => q.Where(a =>
                 a.CloudResourceId == value ||
-                a.Sources.Any(s => s.ConnectorType == ConnectorType.Azure && s.ExternalId == value), ct),
-            MatchAttributes.AwsInstanceId => q.FirstOrDefaultAsync(a =>
+                a.Sources.Any(s => s.ConnectorType == ConnectorType.Azure && s.ExternalId == value))
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.AwsInstanceId => q.Where(a =>
                 a.CloudResourceId == value ||
-                a.Sources.Any(s => s.ConnectorType == ConnectorType.Aws && s.ExternalId == value), ct),
-            MatchAttributes.VmwareUuid => q.FirstOrDefaultAsync(a =>
+                a.Sources.Any(s => s.ConnectorType == ConnectorType.Aws && s.ExternalId == value))
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.VmwareUuid => q.Where(a =>
                 a.BiosUuid == value ||
-                a.Sources.Any(s => s.ConnectorType == ConnectorType.VmwareVCenter && s.ExternalId == value), ct),
-            MatchAttributes.BiosUuid => q.FirstOrDefaultAsync(a => a.BiosUuid == value, ct),
-            MatchAttributes.SerialNumber => q.FirstOrDefaultAsync(a => a.SerialNumber == value, ct),
-            MatchAttributes.ObjectGuid => q.FirstOrDefaultAsync(a => a.Sources.Any(s =>
+                a.Sources.Any(s => s.ConnectorType == ConnectorType.VmwareVCenter && s.ExternalId == value))
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.BiosUuid => q.Where(a => a.BiosUuid == value)
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.SerialNumber => q.Where(a => a.SerialNumber == value)
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.ObjectGuid => q.Where(a => a.Sources.Any(s =>
                 (s.ConnectorType == ConnectorType.ActiveDirectory || s.ConnectorType == ConnectorType.EntraId) &&
-                s.ExternalId == value), ct),
-            MatchAttributes.EndpointId => q.FirstOrDefaultAsync(a => a.Sources.Any(s =>
-                EdrConnectors.Contains(s.ConnectorType) && s.ExternalId == value), ct),
-            _ => Task.FromResult<Asset?>(null)
+                s.ExternalId == value)).OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.EndpointId => q.Where(a => a.Sources.Any(s =>
+                    EdrConnectors.Contains(s.ConnectorType) && s.ExternalId == value))
+                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            _ => Task.FromResult(new List<Asset>())
         };
     }
 
@@ -297,30 +308,7 @@ public class UnitOfWork : IUnitOfWork
     public IRepository<Setting> Settings { get; }
 
     public async Task<int> SaveChangesAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            return await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException ex)
-        {
-            // A freshly created child (client-generated GUID key — AssetIp/AssetTag/AssetSource/
-            // AssetHistory) can get mis-tracked as Modified, so its UPDATE affects 0 rows and the
-            // whole asset save fails. The failed entries are exactly the phantom-new rows: re-mark
-            // them as Added and retry once so the insert goes through.
-            var repromoted = false;
-            foreach (var entry in ex.Entries)
-            {
-                if (entry.State == EntityState.Modified)
-                {
-                    entry.State = EntityState.Added;
-                    repromoted = true;
-                }
-            }
-            if (!repromoted) throw;
-            return await _db.SaveChangesAsync(ct);
-        }
-    }
+        => await _db.SaveChangesAsync(ct);
 
     public void ClearChangeTracker() => _db.ChangeTracker.Clear();
 }

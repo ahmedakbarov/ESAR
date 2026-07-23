@@ -35,6 +35,9 @@ public interface IAssetRepository : IRepository<Asset>
     Task<Asset?> FindDeletedBySourceAsync(ConnectorType connector, string externalId, CancellationToken ct = default);
     /// <summary>Executes a hard-identifier lookup for one of the well-known match attributes.</summary>
     Task<Asset?> FindByHardIdentifierAsync(string attribute, string value, CancellationToken ct = default);
+    /// <summary>Returns up to two hard-identifier matches so identity conflicts cannot be hidden by FirstOrDefault.</summary>
+    Task<List<Asset>> FindHardIdentifierCandidatesAsync(string attribute, string value,
+        CancellationToken ct = default);
     /// <summary>Loads soft-match candidates by normalized hostname, MAC or IP overlap.</summary>
     Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname, IReadOnlyCollection<string> macs,
         IReadOnlyCollection<string> ips, CancellationToken ct = default);

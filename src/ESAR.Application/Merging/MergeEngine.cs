@@ -38,6 +38,8 @@ public class MergeEngine : IMergeEngine
         {
             if (string.IsNullOrWhiteSpace(value) || value == current) return;
             owners.TryGetValue(field, out var ownerName);
+            // Values explicitly curated by an operator are never silently replaced by discovery.
+            if (string.Equals(ownerName, "Manual", StringComparison.OrdinalIgnoreCase)) return;
             ConnectorType? owner = ownerName != null && Enum.TryParse<ConnectorType>(ownerName, out var o) ? o : null;
             // Empty values are filled by anyone; conflicting values only by a higher-priority source.
             if (!string.IsNullOrWhiteSpace(current) && !await _priority.WinsAsync(incoming.Source, owner, field, ct))
@@ -117,6 +119,64 @@ public class MergeEngine : IMergeEngine
 
     public async Task MergeAssetsAsync(Asset survivor, Asset duplicate, string mergedBy, CancellationToken ct = default)
     {
+        var survivorOwners = ParseOwners(survivor.AttributeSourcesJson);
+        var duplicateOwners = ParseOwners(duplicate.AttributeSourcesJson);
+
+        async Task Fill(string field, string? current, string? value, Action apply)
+        {
+            if (!string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(value)) return;
+            apply();
+            if (duplicateOwners.TryGetValue(field, out var owner)) survivorOwners[field] = owner;
+            await _uow.AssetHistories.AddAsync(new AssetHistory
+            {
+                AssetId = survivor.Id,
+                FieldName = field,
+                OldValue = current,
+                NewValue = value,
+                ChangedBy = mergedBy
+            }, ct);
+        }
+
+        await Fill(nameof(Asset.Fqdn), survivor.Fqdn, duplicate.Fqdn, () => survivor.Fqdn = duplicate.Fqdn);
+        await Fill(nameof(Asset.Domain), survivor.Domain, duplicate.Domain, () => survivor.Domain = duplicate.Domain);
+        await Fill(nameof(Asset.OperatingSystem), survivor.OperatingSystem, duplicate.OperatingSystem,
+            () => survivor.OperatingSystem = duplicate.OperatingSystem);
+        await Fill(nameof(Asset.OsVersion), survivor.OsVersion, duplicate.OsVersion,
+            () => survivor.OsVersion = duplicate.OsVersion);
+        await Fill(nameof(Asset.SerialNumber), survivor.SerialNumber, duplicate.SerialNumber,
+            () => survivor.SerialNumber = duplicate.SerialNumber);
+        await Fill(nameof(Asset.BiosUuid), survivor.BiosUuid, duplicate.BiosUuid,
+            () => survivor.BiosUuid = duplicate.BiosUuid);
+        await Fill(nameof(Asset.Manufacturer), survivor.Manufacturer, duplicate.Manufacturer,
+            () => survivor.Manufacturer = duplicate.Manufacturer);
+        await Fill(nameof(Asset.Model), survivor.Model, duplicate.Model, () => survivor.Model = duplicate.Model);
+        await Fill(nameof(Asset.CloudProvider), survivor.CloudProvider, duplicate.CloudProvider,
+            () => survivor.CloudProvider = duplicate.CloudProvider);
+        await Fill(nameof(Asset.CloudResourceId), survivor.CloudResourceId, duplicate.CloudResourceId,
+            () => survivor.CloudResourceId = duplicate.CloudResourceId);
+        await Fill(nameof(Asset.CloudRegion), survivor.CloudRegion, duplicate.CloudRegion,
+            () => survivor.CloudRegion = duplicate.CloudRegion);
+        await Fill(nameof(Asset.CloudSubscriptionId), survivor.CloudSubscriptionId, duplicate.CloudSubscriptionId,
+            () => survivor.CloudSubscriptionId = duplicate.CloudSubscriptionId);
+        await Fill(nameof(Asset.CloudAccountId), survivor.CloudAccountId, duplicate.CloudAccountId,
+            () => survivor.CloudAccountId = duplicate.CloudAccountId);
+        await Fill(nameof(Asset.OwnerName), survivor.OwnerName, duplicate.OwnerName,
+            () => survivor.OwnerName = duplicate.OwnerName);
+        await Fill(nameof(Asset.OwnerEmail), survivor.OwnerEmail, duplicate.OwnerEmail,
+            () => survivor.OwnerEmail = duplicate.OwnerEmail);
+        await Fill(nameof(Asset.Department), survivor.Department, duplicate.Department,
+            () => survivor.Department = duplicate.Department);
+        await Fill(nameof(Asset.BusinessUnit), survivor.BusinessUnit, duplicate.BusinessUnit,
+            () => survivor.BusinessUnit = duplicate.BusinessUnit);
+        await Fill(nameof(Asset.Location), survivor.Location, duplicate.Location,
+            () => survivor.Location = duplicate.Location);
+        await Fill(nameof(Asset.Classification), survivor.Classification, duplicate.Classification,
+            () => survivor.Classification = duplicate.Classification);
+
+        if (survivor.AssetType == AssetType.Unknown) survivor.AssetType = duplicate.AssetType;
+        if (survivor.Environment == EnvironmentType.Unknown) survivor.Environment = duplicate.Environment;
+        if (survivor.Criticality == CriticalityLevel.Unknown) survivor.Criticality = duplicate.Criticality;
+
         foreach (var source in duplicate.Sources.ToList())
         {
             source.AssetId = survivor.Id;
@@ -133,15 +193,34 @@ public class MergeEngine : IMergeEngine
         }
         foreach (var tag in duplicate.Tags.ToList())
         {
-            if (!survivor.Tags.Any(t => t.Key == tag.Key))
+            var existing = survivor.Tags.FirstOrDefault(t =>
+                t.Key.Equals(tag.Key, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
             {
                 tag.AssetId = survivor.Id;
                 survivor.Tags.Add(tag);
             }
+            else if (await _priority.WinsAsync(tag.Source, existing.Source, $"Tag:{tag.Key}", ct))
+            {
+                existing.Value = tag.Value;
+                existing.Source = tag.Source;
+            }
+        }
+        foreach (var software in duplicate.Software.ToList())
+        {
+            if (survivor.Software.Any(existing =>
+                    existing.Source == software.Source &&
+                    existing.Name.Equals(software.Name, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            software.AssetId = survivor.Id;
+            survivor.Software.Add(software);
         }
 
         survivor.FirstSeen = duplicate.FirstSeen < survivor.FirstSeen ? duplicate.FirstSeen : survivor.FirstSeen;
         survivor.LastSeen = duplicate.LastSeen > survivor.LastSeen ? duplicate.LastSeen : survivor.LastSeen;
+        survivor.AttributeSourcesJson = JsonSerializer.Serialize(survivorOwners);
+        survivor.UpdatedAt = DateTime.UtcNow;
+        survivor.UpdatedBy = mergedBy;
 
         duplicate.IsDeleted = true;
         duplicate.MergedIntoAssetId = survivor.Id;
@@ -172,10 +251,12 @@ public class MergeEngine : IMergeEngine
                     sourceInterface.IsPrimary = false;
             }
 
+            // Keep one observation per source. AD confirming an Azure IP must not mutate
+            // the Azure observation's provenance or freshness.
             var existing = asset.IpAddresses.FirstOrDefault(i =>
-                (iface.IpAddress != null && i.IpAddress == iface.IpAddress &&
-                    (iface.MacAddress is null || i.MacAddress == iface.MacAddress || i.Source == incoming.Source)) ||
-                (iface.IpAddress == null && iface.MacAddress != null && i.MacAddress == iface.MacAddress));
+                i.Source == incoming.Source &&
+                ((iface.IpAddress != null && i.IpAddress == iface.IpAddress) ||
+                 (iface.IpAddress == null && iface.MacAddress != null && i.MacAddress == iface.MacAddress)));
             if (existing is null)
             {
                 var created = new AssetIp
@@ -195,15 +276,9 @@ public class MergeEngine : IMergeEngine
             }
             else
             {
-                // A source may legitimately replace a NIC while retaining its IP.
-                // Refresh that source's MAC observation rather than retaining the old
-                // address and letting it become a false cross-source match signal.
-                if (existing.Source == incoming.Source && !string.IsNullOrWhiteSpace(iface.MacAddress))
+                if (!string.IsNullOrWhiteSpace(iface.MacAddress))
                     existing.MacAddress = iface.MacAddress;
-                if (existing.Source == incoming.Source)
-                    existing.IsPrimary = iface.IsPrimary;
-                else
-                    existing.IsPrimary |= iface.IsPrimary;
+                existing.IsPrimary = iface.IsPrimary;
                 existing.LastSeen = incoming.SeenAt;
             }
         }
@@ -222,8 +297,12 @@ public class MergeEngine : IMergeEngine
                 // a new client-keyed dependent during connector ingestion.
                 await _uow.AssetTags.AddAsync(created, ct);
             }
-            else if (existing.Source == incoming.Source)
+            else if (existing.Source == incoming.Source ||
+                     await _priority.WinsAsync(incoming.Source, existing.Source, $"Tag:{key}", ct))
+            {
                 existing.Value = value;
+                existing.Source = incoming.Source;
+            }
         }
     }
 

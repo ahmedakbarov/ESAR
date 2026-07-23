@@ -69,17 +69,26 @@ public class MatchingController : ControllerBase
         if (asset is null) return NotFound(new { error = "Matched asset no longer exists." });
 
         var candidate = JsonSerializer.Deserialize<DiscoveredAsset>(record.CandidateJson)!;
+        var alreadyLinked = await _uow.Assets.FindBySourceAsync(candidate.Source, candidate.ExternalId, ct);
+        if (alreadyLinked is not null && alreadyLinked.Id != asset.Id)
+            return Conflict(new
+            {
+                error = "This source record was already linked to another asset while the review was pending.",
+                assetId = alreadyLinked.Id
+            });
         await _merge.ApplyAsync(asset, candidate, ct);
         if (!asset.Sources.Any(s => s.ConnectorType == candidate.Source && s.ExternalId == candidate.ExternalId))
         {
-            asset.Sources.Add(new AssetSource
+            var source = new AssetSource
             {
                 AssetId = asset.Id,
                 ConnectorType = candidate.Source,
                 ExternalId = candidate.ExternalId,
                 SourceHostname = candidate.Hostname,
                 RawData = candidate.RawJson
-            });
+            };
+            asset.Sources.Add(source);
+            await _uow.AssetSources.AddAsync(source, ct);
         }
         _uow.Assets.Update(asset);
 
@@ -88,6 +97,18 @@ public class MatchingController : ControllerBase
         record.ReviewedAt = DateTime.UtcNow;
         record.ReviewComment = request?.Comment;
         _uow.MatchRecords.Update(record);
+        foreach (var sibling in await _uow.MatchRecords.ListAsync(match =>
+                     match.Id != record.Id &&
+                     match.SourceConnector == record.SourceConnector &&
+                     match.ExternalId == record.ExternalId &&
+                     match.Decision == MatchDecision.QueuedForReview, ct))
+        {
+            sibling.Decision = MatchDecision.Approved;
+            sibling.ReviewedBy = _user.UserName;
+            sibling.ReviewedAt = record.ReviewedAt;
+            sibling.ReviewComment = "Resolved together with another review for the same source record.";
+            _uow.MatchRecords.Update(sibling);
+        }
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.MatchingDecision, nameof(MatchRecord), record.Id.ToString(),
             new { decision = "Approved", assetId = asset.Id }, ct);
@@ -104,16 +125,24 @@ public class MatchingController : ControllerBase
         if (record is null || record.Decision != MatchDecision.QueuedForReview) return NotFound();
         if (record.CandidateJson is null) return BadRequest(new { error = "Record has no candidate payload." });
 
-        // Mark reviewed first so re-ingestion cannot re-queue against this record.
+        var candidate = JsonSerializer.Deserialize<DiscoveredAsset>(record.CandidateJson)!;
+        var alreadyLinked = await _uow.Assets.FindBySourceAsync(candidate.Source, candidate.ExternalId, ct);
+        if (alreadyLinked is not null)
+            return Conflict(new
+            {
+                error = "This source record was already linked while the review was pending.",
+                assetId = alreadyLinked.Id
+            });
+
+        // The decision and new asset are persisted in one SaveChanges call. A failed asset
+        // insert therefore cannot leave the review permanently rejected without an asset.
         record.Decision = MatchDecision.Rejected;
         record.ReviewedBy = _user.UserName;
         record.ReviewedAt = DateTime.UtcNow;
         record.ReviewComment = request?.Comment;
         _uow.MatchRecords.Update(record);
-        await _uow.SaveChangesAsync(ct);
 
         // Create a distinct asset directly from the candidate snapshot.
-        var candidate = JsonSerializer.Deserialize<DiscoveredAsset>(record.CandidateJson)!;
         var asset = new Asset
         {
             Hostname = candidate.Hostname ?? candidate.ExternalId,
@@ -132,6 +161,19 @@ public class MatchingController : ControllerBase
         await _uow.Assets.AddAsync(asset, ct);
         record.CreatedAssetId = asset.Id;
         _uow.MatchRecords.Update(record);
+        foreach (var sibling in await _uow.MatchRecords.ListAsync(match =>
+                     match.Id != record.Id &&
+                     match.SourceConnector == record.SourceConnector &&
+                     match.ExternalId == record.ExternalId &&
+                     match.Decision == MatchDecision.QueuedForReview, ct))
+        {
+            sibling.Decision = MatchDecision.Rejected;
+            sibling.CreatedAssetId = asset.Id;
+            sibling.ReviewedBy = _user.UserName;
+            sibling.ReviewedAt = record.ReviewedAt;
+            sibling.ReviewComment = "Resolved together with another review for the same source record.";
+            _uow.MatchRecords.Update(sibling);
+        }
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.MatchingDecision, nameof(MatchRecord), record.Id.ToString(),
             new { decision = "Rejected", newAssetId = asset.Id }, ct);
@@ -183,6 +225,10 @@ public class MatchingController : ControllerBase
     [Authorize("settings.manage")]
     public async Task<IActionResult> UpdateRule(Guid id, [FromBody] RuleUpdate update, CancellationToken ct)
     {
+        if (update.Weight is < 0 or > 1)
+            return BadRequest(new { error = "Rule weight must be between 0 and 1." });
+        if (update.Order < 0)
+            return BadRequest(new { error = "Rule order cannot be negative." });
         var rule = await _uow.MatchingRules.GetByIdAsync(id, ct);
         if (rule is null) return NotFound();
         rule.Weight = update.Weight;

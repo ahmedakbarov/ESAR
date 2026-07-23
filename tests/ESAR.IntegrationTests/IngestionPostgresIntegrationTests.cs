@@ -95,6 +95,9 @@ public class IngestionPostgresIntegrationTests : IClassFixture<ApiFixture>
         asset.IpAddresses.Should().Contain(networkInterface =>
             networkInterface.Source == ConnectorType.Azure && networkInterface.IpAddress == identity.PrimaryIp &&
             networkInterface.MacAddress == identity.Mac);
+        asset.IpAddresses.Should().Contain(networkInterface =>
+            networkInterface.Source == ConnectorType.ActiveDirectory &&
+            networkInterface.IpAddress == identity.PrimaryIp);
 
         await using var scope = _fixture.Factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<EsarDbContext>();

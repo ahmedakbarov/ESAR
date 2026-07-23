@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Esar.Application.Abstractions;
 using Esar.Application.Contracts;
@@ -35,6 +36,10 @@ public class MatchingOptions
     public decimal AutoMergeThreshold { get; set; } = 0.85m;
     /// <summary>Score at or above which a soft match is queued for manual review.</summary>
     public decimal ReviewThreshold { get; set; } = 0.60m;
+    /// <summary>Best and second-best candidates closer than this are considered ambiguous.</summary>
+    public decimal AmbiguityDelta { get; set; } = 0.10m;
+    /// <summary>Network observations older than this are not identity evidence.</summary>
+    public int NetworkEvidenceMaxAgeDays { get; set; } = 30;
 }
 
 public class MatchingEngine : IMatchingEngine
@@ -68,14 +73,33 @@ public class MatchingEngine : IMatchingEngine
             if (!candidate.Identifiers.TryGetValue(rule.Attribute, out var value) || string.IsNullOrWhiteSpace(value))
                 continue;
 
-            var asset = await _uow.Assets.FindByHardIdentifierAsync(rule.Attribute, value, ct);
-            if (asset is null) continue;
+            var hardCandidates = await _uow.Assets.FindHardIdentifierCandidatesAsync(rule.Attribute, value, ct);
+            if (hardCandidates.Count == 0) continue;
+            var asset = hardCandidates[0];
 
             result.Decision = MatchDecision.AutoMerged;
             result.MatchedAsset = asset;
             result.ConfidenceScore = 1.0m;
             result.MatchType = MatchType.Hard;
             result.Explanations.Add(new MatchExplanation(rule.Name, rule.Attribute, value, value, 1.0m, 1.0m, true));
+            if (hardCandidates.Count > 1)
+            {
+                result.Decision = MatchDecision.QueuedForReview;
+                result.Explanations.Add(new MatchExplanation(
+                    "Hard identifier conflict safety policy",
+                    rule.Attribute,
+                    value,
+                    string.Join(",", hardCandidates.Select(candidateAsset => candidateAsset.Id)),
+                    1m,
+                    0m,
+                    false));
+            }
+            else if (asset.Status == AssetStatus.Decommissioned)
+            {
+                result.Decision = MatchDecision.QueuedForReview;
+                result.Explanations.Add(new MatchExplanation(
+                    "Decommissioned asset safety policy", rule.Attribute, value, value, 1m, 0m, false));
+            }
             return result;
         }
 
@@ -91,22 +115,24 @@ public class MatchingEngine : IMatchingEngine
             string.IsNullOrEmpty(normalizedHostname) ? null : normalizedHostname, macs, ips, ct);
         if (candidates.Count == 0) return result;
 
-        Asset? best = null;
-        decimal bestScore = 0;
-        List<MatchExplanation> bestExplanations = new();
-
-        foreach (var asset in candidates)
-        {
-            var (score, explanations) = ScoreCandidate(candidate, asset, softRules, normalizedHostname, macs, ips);
-            if (score > bestScore)
+        var networkEvidenceCutoff = DateTime.UtcNow.AddDays(-options.NetworkEvidenceMaxAgeDays);
+        var ranked = candidates
+            .Select(asset =>
             {
-                bestScore = score;
-                best = asset;
-                bestExplanations = explanations;
-            }
-        }
+                var scored = ScoreCandidate(candidate, asset, softRules, normalizedHostname, macs, ips,
+                    networkEvidenceCutoff);
+                return new { Asset = asset, scored.Score, scored.Explanations };
+            })
+            .OrderByDescending(candidateScore => candidateScore.Score)
+            .ThenBy(candidateScore => candidateScore.Asset.Id)
+            .ToList();
 
-        if (best is null) return result;
+        var bestCandidate = ranked.FirstOrDefault();
+        if (bestCandidate is null || bestCandidate.Score <= 0) return result;
+        var best = bestCandidate.Asset;
+        var bestScore = bestCandidate.Score;
+        var bestExplanations = bestCandidate.Explanations;
+        var secondBest = ranked.Skip(1).FirstOrDefault();
 
         result.MatchedAsset = best;
         result.ConfidenceScore = Math.Round(bestScore, 4);
@@ -133,12 +159,18 @@ public class MatchingEngine : IMatchingEngine
             string.Equals(e.Attribute, MatchAttributes.MacAddress, StringComparison.OrdinalIgnoreCase));
         var candidateHasMac = macs.Count > 0;
         var candidateMacs = macs.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var existingMacs = best.IpAddresses.Where(networkInterface => !string.IsNullOrWhiteSpace(networkInterface.MacAddress))
+        var existingMacs = best.IpAddresses.Where(networkInterface =>
+                networkInterface.LastSeen >= networkEvidenceCutoff &&
+                !string.IsNullOrWhiteSpace(networkInterface.MacAddress))
             .Select(networkInterface => networkInterface.MacAddress!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var macConflict = candidateHasMac && existingMacs.Count > 0 && !candidateMacs.Overlaps(existingMacs);
         var hasStrongAzureAdNetworkIdentity = hostnameMatches &&
             (macMatches || (ipMatches && !macConflict));
+        var hasStrongGenericIdentity = macMatches && (hostnameMatches || ipMatches);
+        var positiveEvidenceCount = bestExplanations.Count(e => e.Matched);
+        var ambiguous = secondBest is not null && secondBest.Score > 0 &&
+            bestScore - secondBest.Score < options.AmbiguityDelta;
 
         // AD DNS and LDAP observations are not guaranteed to be one NIC record. Restrict
         // Azure-to-AD auto-merges to a matching hostname plus IP or MAC evidence. All weaker
@@ -152,6 +184,18 @@ public class MatchingEngine : IMatchingEngine
                 $"hostname={hostnameMatches}; ip={ipMatches}; mac={macMatches}",
                 "counterpart asset is decommissioned",
                 1m, 0m, false));
+        }
+        else if (ambiguous)
+        {
+            result.Decision = MatchDecision.QueuedForReview;
+            result.Explanations.Add(new MatchExplanation(
+                "Ambiguous candidate safety policy",
+                "SecondBestCandidate",
+                best.Id.ToString(),
+                secondBest!.Asset.Id.ToString(),
+                1m,
+                secondBest.Score,
+                false));
         }
         else if (azureAdCounterpart && !hasStrongAzureAdNetworkIdentity)
         {
@@ -174,9 +218,10 @@ public class MatchingEngine : IMatchingEngine
                 "hostname plus IP or MAC matched",
                 1m, 1m, true));
         }
-        else result.Decision = hasIpOnlyPositiveEvidence ? MatchDecision.QueuedForReview
-            : bestScore >= options.AutoMergeThreshold ? MatchDecision.AutoMerged
-            : bestScore >= options.ReviewThreshold ? MatchDecision.QueuedForReview
+        else if (hasStrongGenericIdentity && bestScore >= options.AutoMergeThreshold)
+            result.Decision = MatchDecision.AutoMerged;
+        else result.Decision = hasIpOnlyPositiveEvidence || positiveEvidenceCount > 0
+            ? MatchDecision.QueuedForReview
             : MatchDecision.NewAsset;
 
         if (result.Decision == MatchDecision.NewAsset) result.MatchedAsset = null;
@@ -184,9 +229,11 @@ public class MatchingEngine : IMatchingEngine
     }
 
     private static (decimal Score, List<MatchExplanation>) ScoreCandidate(DiscoveredAsset candidate, Asset asset,
-        List<MatchingRule> rules, string normalizedHostname, List<string> macs, List<string> ips)
+        List<MatchingRule> rules, string normalizedHostname, List<string> macs, List<string> ips,
+        DateTime networkEvidenceCutoff)
     {
-        decimal total = 0, achieved = 0;
+        var total = rules.Where(rule => rule.Weight > 0).Sum(rule => rule.Weight);
+        decimal achieved = 0;
         var explanations = new List<MatchExplanation>();
 
         foreach (var rule in rules)
@@ -204,14 +251,20 @@ public class MatchingEngine : IMatchingEngine
                     break;
                 case MatchAttributes.MacAddress:
                     candidateValue = string.Join(",", macs);
-                    var assetMacs = asset.IpAddresses.Where(i => i.MacAddress != null).Select(i => i.MacAddress!).ToHashSet();
+                    var assetMacs = asset.IpAddresses
+                        .Where(i => i.LastSeen >= networkEvidenceCutoff && i.MacAddress != null)
+                        .Select(i => i.MacAddress!)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     matchedValue = string.Join(",", assetMacs);
                     applicable = macs.Count > 0 && assetMacs.Count > 0;
                     matched = applicable && macs.Any(assetMacs.Contains);
                     break;
                 case MatchAttributes.IpAddress:
                     candidateValue = string.Join(",", ips);
-                    var assetIps = asset.IpAddresses.Select(i => i.IpAddress).ToHashSet();
+                    var assetIps = asset.IpAddresses
+                        .Where(i => i.LastSeen >= networkEvidenceCutoff)
+                        .Select(i => i.IpAddress)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     matchedValue = string.Join(",", assetIps);
                     applicable = ips.Count > 0 && assetIps.Count > 0;
                     matched = applicable && ips.Any(assetIps.Contains);
@@ -236,7 +289,6 @@ public class MatchingEngine : IMatchingEngine
             }
 
             if (!applicable) continue;
-            total += rule.Weight;
             var contribution = matched ? rule.Weight : 0;
             achieved += contribution;
             explanations.Add(new MatchExplanation(rule.Name, rule.Attribute, candidateValue, matchedValue,
@@ -260,12 +312,22 @@ public class MatchingEngine : IMatchingEngine
     {
         var options = new MatchingOptions();
         var settings = await _uow.Settings.ListAsync(
-            s => s.Key == SettingKeys.MatchAutoMergeThreshold || s.Key == SettingKeys.MatchReviewThreshold, ct);
+            s => s.Key == SettingKeys.MatchAutoMergeThreshold ||
+                 s.Key == SettingKeys.MatchReviewThreshold ||
+                 s.Key == SettingKeys.MatchAmbiguityDelta ||
+                 s.Key == SettingKeys.MatchNetworkEvidenceMaxAgeDays, ct);
         foreach (var s in settings)
         {
-            if (!decimal.TryParse(s.Value, out var v)) continue;
+            if (s.Key == SettingKeys.MatchNetworkEvidenceMaxAgeDays &&
+                int.TryParse(s.Value, out var days) && days > 0)
+            {
+                options.NetworkEvidenceMaxAgeDays = days;
+                continue;
+            }
+            if (!decimal.TryParse(s.Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var v)) continue;
             if (s.Key == SettingKeys.MatchAutoMergeThreshold) options.AutoMergeThreshold = v;
             if (s.Key == SettingKeys.MatchReviewThreshold) options.ReviewThreshold = v;
+            if (s.Key == SettingKeys.MatchAmbiguityDelta) options.AmbiguityDelta = v;
         }
         return options;
     }
@@ -282,6 +344,8 @@ public static class SettingKeys
 {
     public const string MatchAutoMergeThreshold = "matching.autoMergeThreshold";
     public const string MatchReviewThreshold = "matching.reviewThreshold";
+    public const string MatchAmbiguityDelta = "matching.ambiguityDelta";
+    public const string MatchNetworkEvidenceMaxAgeDays = "matching.networkEvidenceMaxAgeDays";
     public const string StaleAssetDays = "lifecycle.staleAssetDays";
     public const string DecommissionAfterDays = "lifecycle.decommissionAfterDays";
     public const string ComplianceEvidenceMaxAgeDays = "compliance.evidenceMaxAgeDays";
