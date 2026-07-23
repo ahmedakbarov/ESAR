@@ -1,9 +1,11 @@
 using Asp.Versioning;
 using Esar.Application.Abstractions;
 using Esar.Application.Auth;
+using Esar.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Configuration;
 
 namespace Esar.Api.Controllers;
 
@@ -14,12 +16,25 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthService _auth;
     private readonly ICurrentUserService _currentUser;
+    private readonly IUnitOfWork _uow;
+    private readonly IConfiguration _config;
 
-    public AuthController(IAuthService auth, ICurrentUserService currentUser)
+    public AuthController(IAuthService auth, ICurrentUserService currentUser, IUnitOfWork uow, IConfiguration config)
     {
         _auth = auth;
         _currentUser = currentUser;
+        _uow = uow;
+        _config = config;
     }
+
+    private static object ToResponse(LoginResult result) => new
+    {
+        token = result.Token,
+        expiresAt = result.ExpiresAt,
+        displayName = result.DisplayName,
+        roles = result.Roles,
+        userId = result.UserId
+    };
 
     public record LoginRequest(string Username, string Password);
 
@@ -33,13 +48,57 @@ public class AuthController : ControllerBase
 
         var result = await _auth.LoginAsync(request.Username.Trim(), request.Password, ct);
         if (!result.Success) return Unauthorized(new { error = result.Error });
+        return Ok(ToResponse(result));
+    }
+
+    public record EntraLoginRequest(string IdToken);
+
+    /// <summary>Exchanges a validated Entra ID (Azure AD) ID token for an ESAR JWT.</summary>
+    [HttpPost("login/entra")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LoginEntra([FromBody] EntraLoginRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.IdToken))
+            return BadRequest(new { error = "idToken is required." });
+
+        var result = await _auth.LoginWithEntraIdAsync(request.IdToken, ct);
+        if (!result.Success) return Unauthorized(new { error = result.Error });
+        return Ok(ToResponse(result));
+    }
+
+    public record LdapLoginRequest(string Username, string Password);
+
+    /// <summary>Authenticates against Active Directory (LDAP bind) and returns an ESAR JWT.</summary>
+    [HttpPost("login/ldap")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LoginLdap([FromBody] LdapLoginRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(new { error = "Username and password are required." });
+
+        var result = await _auth.LoginWithLdapAsync(request.Username.Trim(), request.Password, ct);
+        if (result.Success) return Ok(ToResponse(result));
+        var unavailable = result.Error?.StartsWith("AD login is temporarily", StringComparison.Ordinal) == true;
+        return unavailable ? StatusCode(503, new { error = result.Error }) : Unauthorized(new { error = result.Error });
+    }
+
+    /// <summary>Tells the frontend which login methods are available, without a rebuild — toggled
+    /// purely by EntraId:TenantId/ClientId config and whether an AD connector is enabled.</summary>
+    [HttpGet("config")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Config(CancellationToken ct)
+    {
+        var entraTenantId = _config["EntraId:TenantId"];
+        var entraClientId = _config["EntraId:ClientId"];
+        var entraEnabled = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraClientId);
+        var ldapEnabled = await _uow.Connectors.FirstOrDefaultAsync(
+            c => c.Type == ConnectorType.ActiveDirectory && c.Enabled, ct) is not null;
         return Ok(new
         {
-            token = result.Token,
-            expiresAt = result.ExpiresAt,
-            displayName = result.DisplayName,
-            roles = result.Roles,
-            userId = result.UserId
+            entraEnabled,
+            ldapEnabled,
+            entraTenantId = entraEnabled ? entraTenantId : null,
+            entraClientId = entraEnabled ? entraClientId : null
         });
     }
 

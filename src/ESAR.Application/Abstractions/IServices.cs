@@ -121,3 +121,32 @@ public interface INormalizationService
     string? NormalizeOs(string? os);
     string? NormalizeDomain(string? domain);
 }
+
+/// <summary>Interactive LDAP bind authentication for AD login — distinct from the ActiveDirectory
+/// connector, which discovers assets using its own service account, not a logging-in user's
+/// credentials. Binds against whichever ActiveDirectory connector is configured and enabled.</summary>
+public interface ILdapLoginService
+{
+    Task<LdapBindResult> TryBindAsync(string username, string password, CancellationToken ct = default);
+}
+
+public enum LdapBindFailureReason { InvalidCredentials, ServerUnreachable, NoConnectorConfigured, Other }
+
+public record LdapBindResult(bool Success, LdapBindFailureReason? FailureReason, string? ObjectGuid,
+    string? Email, string? DisplayName)
+{
+    public static LdapBindResult Fail(LdapBindFailureReason reason) => new(false, reason, null, null, null);
+    public static LdapBindResult Ok(string objectGuid, string? email, string? displayName) =>
+        new(true, null, objectGuid, email, displayName);
+}
+
+/// <summary>Verifies an Entra ID (Azure AD) issued ID token against Microsoft's own OIDC signing
+/// keys — a token's claims are only trusted after its signature is checked, never decoded blind.</summary>
+public interface IEntraTokenValidator
+{
+    /// <summary>True once EntraId:TenantId and EntraId:ClientId are both configured.</summary>
+    bool IsConfigured { get; }
+    Task<EntraTokenClaims> ValidateAsync(string idToken, CancellationToken ct = default);
+}
+
+public record EntraTokenClaims(string ObjectId, string Email, string DisplayName);

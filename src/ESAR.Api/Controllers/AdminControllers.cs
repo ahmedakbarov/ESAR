@@ -45,15 +45,25 @@ public class UsersController : ControllerBase
         }));
     }
 
-    public record CreateUserRequest(string Username, string Email, string DisplayName, string Password,
-        List<string> Roles);
+    public record CreateUserRequest(string Username, string Email, string DisplayName, string? Password,
+        List<string> Roles, AuthProvider Provider = AuthProvider.Local);
 
     [HttpPost]
     [Authorize("users.manage")]
     public async Task<IActionResult> Create([FromBody] CreateUserRequest request, CancellationToken ct)
     {
-        if (request.Password.Length < 12)
-            return BadRequest(new { error = "Password must be at least 12 characters." });
+        if (request.Provider == AuthProvider.Local)
+        {
+            if (string.IsNullOrEmpty(request.Password) || request.Password.Length < 12)
+                return BadRequest(new { error = "Password must be at least 12 characters." });
+        }
+        else if (!string.IsNullOrEmpty(request.Password))
+        {
+            // A federated account's credential lives with the external IdP (Entra ID/AD), not
+            // here — accepting one would be silently ignored, which is worse than rejecting it.
+            return BadRequest(new { error = "Password must not be set for a federated (Entra ID/AD) account." });
+        }
+
         var existing = await _uow.Users.FirstOrDefaultAsync(
             u => u.Username == request.Username || u.Email == request.Email, ct);
         if (existing is not null) return Conflict(new { error = "Username or email already exists." });
@@ -63,8 +73,10 @@ public class UsersController : ControllerBase
             Username = request.Username.Trim(),
             Email = request.Email.Trim(),
             DisplayName = request.DisplayName.Trim(),
-            PasswordHash = _hasher.Hash(request.Password),
-            AuthProvider = AuthProvider.Local
+            PasswordHash = request.Provider == AuthProvider.Local ? _hasher.Hash(request.Password!) : null,
+            AuthProvider = request.Provider
+            // ExternalObjectId stays null for federated accounts — linked automatically on their
+            // first successful Entra ID/AD login (AuthService.ResolveOrProvisionUserAsync).
         };
         await _uow.Users.AddAsync(user, ct);
         var roles = await _uow.Roles.ListAsync(r => request.Roles.Contains(r.Name), ct);
@@ -72,7 +84,7 @@ public class UsersController : ControllerBase
             await _uow.UserRoles.AddAsync(new UserRole { UserId = user.Id, RoleId = role.Id }, ct);
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.UserCreated, nameof(User), user.Id.ToString(),
-            new { user.Username, request.Roles }, ct);
+            new { user.Username, request.Roles, provider = request.Provider.ToString() }, ct);
         return Ok(new { user.Id, user.Username });
     }
 

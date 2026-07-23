@@ -175,6 +175,11 @@ public class EsarDbContext : DbContext
             e.ToTable("users");
             e.HasIndex(x => x.Username).IsUnique();
             e.HasIndex(x => x.Email).IsUnique();
+            // Prevents two ESAR accounts from silently claiming the same federated identity.
+            // Partial (WHERE ExternalObjectId IS NOT NULL) so it's a no-op for Local accounts
+            // and for federated placeholders an admin pre-created but that haven't logged in yet.
+            e.HasIndex(x => new { x.AuthProvider, x.ExternalObjectId }).IsUnique()
+                .HasFilter("\"ExternalObjectId\" IS NOT NULL");
             e.Property(x => x.Username).HasMaxLength(128).IsRequired();
             e.Property(x => x.Email).HasMaxLength(320).IsRequired();
         });

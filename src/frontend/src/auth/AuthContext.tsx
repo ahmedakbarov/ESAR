@@ -7,7 +7,16 @@ interface AuthState {
   roles: string[];
   userId: string | null;
   login: (username: string, password: string) => Promise<void>;
+  loginWithEntra: (idToken: string) => Promise<void>;
+  loginWithLdap: (username: string, password: string) => Promise<void>;
   logout: () => void;
+}
+
+interface LoginResponse {
+  token: string;
+  displayName?: string;
+  roles?: string[];
+  userId?: string;
 }
 
 const AuthContext = createContext<AuthState>(null!);
@@ -18,17 +27,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [roles, setRoles] = useState<string[]>(JSON.parse(localStorage.getItem('esar_roles') || '[]'));
   const [userId, setUserId] = useState<string | null>(localStorage.getItem('esar_user_id'));
 
-  const login = async (username: string, password: string) => {
-    const { data } = await client.post('/auth/login', { username, password });
+  // Shared tail for every login path — local password, Entra SSO, AD login all end up with the
+  // same shape of response (an ESAR JWT + roles), just from a different endpoint.
+  const applyLogin = (data: LoginResponse, fallbackName: string) => {
     localStorage.setItem('esar_token', data.token);
-    localStorage.setItem('esar_name', data.displayName ?? username);
+    localStorage.setItem('esar_name', data.displayName ?? fallbackName);
     localStorage.setItem('esar_roles', JSON.stringify(data.roles ?? []));
     if (data.userId) localStorage.setItem('esar_user_id', data.userId);
     else localStorage.removeItem('esar_user_id');
     setToken(data.token);
-    setDisplayName(data.displayName ?? username);
+    setDisplayName(data.displayName ?? fallbackName);
     setRoles(data.roles ?? []);
     setUserId(data.userId ?? null);
+  };
+
+  const login = async (username: string, password: string) => {
+    const { data } = await client.post('/auth/login', { username, password });
+    applyLogin(data, username);
+  };
+
+  const loginWithEntra = async (idToken: string) => {
+    const { data } = await client.post('/auth/login/entra', { idToken });
+    applyLogin(data, 'you');
+  };
+
+  const loginWithLdap = async (username: string, password: string) => {
+    const { data } = await client.post('/auth/login/ldap', { username, password });
+    applyLogin(data, username);
   };
 
   const logout = () => {
@@ -43,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ token, displayName, roles, userId, login, logout }}>
+    <AuthContext.Provider value={{ token, displayName, roles, userId, login, loginWithEntra, loginWithLdap, logout }}>
       {children}
     </AuthContext.Provider>
   );
