@@ -11,7 +11,12 @@ namespace Esar.Infrastructure.Connectors;
 
 /// <summary>
 /// VMware vCenter connector using the vSphere Automation REST API.
-/// Settings: baseUrl (https://vcenter.example.com), username, password.
+/// Settings: baseUrl (https://vcenter.example.com), username, password,
+/// allowSelfSignedCert (optional "true" for appliances with a self-signed cert).
+///
+/// Per VM it collects: BIOS/instance UUID (hard-match identity), guest hostname/FQDN and OS,
+/// network interfaces (IP + MAC, for MAC/IP correlation), CPU/memory, VMware Tools state and
+/// hardware version — surfaced as tags so assets stay filterable by any of them.
 /// </summary>
 public class VmwareVCenterConnector : RestConnectorBase
 {
@@ -24,8 +29,11 @@ public class VmwareVCenterConnector : RestConnectorBase
     {
         try
         {
-            await AcquireSessionAsync(settings, ct);
-            return new ConnectorHealth(true, "vCenter session created");
+            using var client = CreateVCenterClient(settings);
+            var baseUrl = settings.Get("baseUrl").TrimEnd('/');
+            var session = await AcquireSessionAsync(client, baseUrl, settings, ct);
+            await CloseSessionAsync(client, baseUrl, session, ct);
+            return new ConnectorHealth(true, "vCenter session created and closed");
         }
         catch (Exception ex)
         {
@@ -37,80 +45,203 @@ public class VmwareVCenterConnector : RestConnectorBase
         SyncContext context, [EnumeratorCancellation] CancellationToken ct = default)
     {
         var baseUrl = settings.Get("baseUrl").TrimEnd('/');
-        var session = await AcquireSessionAsync(settings, ct);
-        var client = CreateClient();
+        using var client = CreateVCenterClient(settings);
+        var session = await AcquireSessionAsync(client, baseUrl, settings, ct);
 
-        using var listResponse = await SendWithRetryAsync(client, () =>
+        try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/vcenter/vm");
-            request.Headers.Add("vmware-api-session-id", session);
-            return request;
-        }, ct: ct);
-        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct));
+            var list = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm", session, ct)
+                ?? throw new InvalidOperationException("vCenter returned no VM list.");
 
-        foreach (var vm in listDoc.RootElement.EnumerateArray())
+            foreach (var vm in list.EnumerateArray())
+            {
+                await RateLimitAsync(context, ct);
+                var vmId = GetString(vm, "vm");
+                if (vmId is null) continue;
+                yield return await BuildAssetAsync(client, baseUrl, session, vm, vmId, ct);
+            }
+        }
+        finally
         {
-            await RateLimitAsync(context, ct);
-            var vmId = GetString(vm, "vm");
-            if (vmId is null) continue;
-
-            // Per-VM detail: identity (BIOS UUID), guest OS, power state.
-            JsonElement detail = default;
-            var hasDetail = false;
-            try
-            {
-                using var detailResponse = await SendWithRetryAsync(client, () =>
-                {
-                    var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/vcenter/vm/{vmId}");
-                    request.Headers.Add("vmware-api-session-id", session);
-                    return request;
-                }, ct: ct);
-                using var detailDoc = JsonDocument.Parse(await detailResponse.Content.ReadAsStringAsync(ct));
-                detail = detailDoc.RootElement.Clone();
-                hasDetail = true;
-            }
-            catch (HttpRequestException ex)
-            {
-                Logger.LogWarning(ex, "vCenter detail fetch failed for {VmId}", vmId);
-            }
-
-            var asset = new DiscoveredAsset
-            {
-                Source = ConnectorType.VmwareVCenter,
-                ExternalId = vmId,
-                Hostname = GetString(vm, "name"),
-                AssetType = AssetType.VirtualMachine,
-                RawJson = hasDetail ? detail.GetRawText() : vm.GetRawText()
-            };
-            if (hasDetail)
-            {
-                if (GetString(detail, "identity", "bios_uuid") is { } biosUuid)
-                {
-                    asset.BiosUuid = biosUuid;
-                    asset.Identifiers[MatchAttributes.VmwareUuid] = biosUuid;
-                }
-                asset.OperatingSystem = GetString(detail, "guest_OS");
-                if (GetString(vm, "power_state") is { } power)
-                    asset.Tags["vm_power_state"] = power;
-            }
-            yield return asset;
+            await CloseSessionAsync(client, baseUrl, session, ct);
         }
     }
 
-    private async Task<string> AcquireSessionAsync(ConnectorSettings settings, CancellationToken ct)
+    private async Task<DiscoveredAsset> BuildAssetAsync(HttpClient client, string baseUrl, string session,
+        JsonElement vm, string vmId, CancellationToken ct)
     {
-        var client = CreateClient();
+        var asset = new DiscoveredAsset
+        {
+            Source = ConnectorType.VmwareVCenter,
+            ExternalId = vmId,
+            Hostname = GetString(vm, "name"),
+            AssetType = AssetType.VirtualMachine,
+            Manufacturer = "VMware, Inc.",
+            Model = "VMware Virtual Machine",
+            RawJson = vm.GetRawText(),
+        };
+
+        // Summary fields returned by the VM list itself — always available, no extra call.
+        if (GetString(vm, "power_state") is { } power) asset.Tags["vm_power_state"] = power;
+        if (GetString(vm, "cpu_count") is { } cpu) asset.Tags["cpu_count"] = cpu;
+        if (GetString(vm, "memory_size_MiB") is { } mem) asset.Tags["memory_mib"] = mem;
+
+        // Per-VM detail: identity (BIOS/instance UUID), guest OS code, hardware version.
+        var detail = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm/{vmId}", session, ct);
+        if (detail is { } d)
+        {
+            asset.RawJson = d.GetRawText();
+            if (GetString(d, "identity", "bios_uuid") is { } biosUuid)
+            {
+                asset.BiosUuid = biosUuid;
+                asset.Identifiers[MatchAttributes.VmwareUuid] = biosUuid;
+            }
+            if (GetString(d, "identity", "instance_uuid") is { } instanceUuid)
+                asset.Tags["instance_uuid"] = instanceUuid;
+            asset.OperatingSystem = GetString(d, "guest_OS");
+            if (GetString(d, "hardware", "version") is { } hw) asset.Tags["hardware_version"] = hw;
+        }
+
+        // Guest identity (needs VMware Tools): configured hostname/FQDN, friendly OS name, IP family.
+        var guest = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm/{vmId}/guest/identity", session, ct);
+        if (guest is { } g)
+        {
+            asset.Fqdn = GetString(g, "host_name");
+            if (GetString(g, "full_name", "default_message") is { } friendlyOs) asset.OperatingSystem = friendlyOs;
+            if (GetString(g, "family") is { } family) asset.Tags["guest_os_family"] = family;
+        }
+
+        await CollectInterfacesAsync(client, baseUrl, session, vmId, asset, ct);
+
+        // VMware Tools health — useful as a filter (e.g. VMs with tools not running).
+        var tools = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm/{vmId}/tools", session, ct);
+        if (tools is { } t)
+        {
+            if (GetString(t, "run_state") is { } runState) asset.Tags["vmware_tools_state"] = runState;
+            if (GetString(t, "version_status") is { } versionStatus) asset.Tags["vmware_tools_version"] = versionStatus;
+        }
+
+        return asset;
+    }
+
+    // Populates asset.Interfaces (IP + MAC) and the primary-MAC match identifier. Prefers guest
+    // networking (real IPs, needs Tools); falls back to virtual hardware for MACs when Tools is off.
+    private async Task CollectInterfacesAsync(HttpClient client, string baseUrl, string session,
+        string vmId, DiscoveredAsset asset, CancellationToken ct)
+    {
+        string? primaryMac = null;
+        var hasMac = false;
+
+        void Add(string? ip, string? mac)
+        {
+            asset.Interfaces.Add(new DiscoveredInterface { IpAddress = ip, MacAddress = mac, IsPrimary = asset.Interfaces.Count == 0 });
+            if (mac is not null) { hasMac = true; primaryMac ??= mac; }
+        }
+
+        var nics = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm/{vmId}/guest/networking/interfaces", session, ct);
+        if (nics is { ValueKind: JsonValueKind.Array })
+        {
+            foreach (var nic in nics.Value.EnumerateArray())
+            {
+                var mac = GetString(nic, "mac_address");
+                var added = false;
+                if (nic.TryGetProperty("ip", out var ipObj) &&
+                    ipObj.TryGetProperty("ip_addresses", out var addrs) && addrs.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var addr in addrs.EnumerateArray())
+                    {
+                        if (GetString(addr, "ip_address") is { } ip) { Add(ip, mac); added = true; }
+                    }
+                }
+                if (!added && mac is not null) Add(null, mac);
+            }
+        }
+
+        // Fallback: virtual NIC MACs from hardware config when the guest reported none.
+        if (!hasMac)
+        {
+            var eth = await TryGetAsync(client, $"{baseUrl}/api/vcenter/vm/{vmId}/hardware/ethernet", session, ct);
+            if (eth is { ValueKind: JsonValueKind.Array })
+            {
+                foreach (var e in eth.Value.EnumerateArray())
+                {
+                    var nicId = GetString(e, "nic");
+                    if (nicId is null) continue;
+                    var nicDetail = await TryGetAsync(client,
+                        $"{baseUrl}/api/vcenter/vm/{vmId}/hardware/ethernet/{nicId}", session, ct);
+                    if (nicDetail is { } nd && GetString(nd, "mac_address") is { } mac) Add(null, mac);
+                }
+            }
+        }
+
+        if (primaryMac is not null) asset.Identifiers[MatchAttributes.MacAddress] = primaryMac;
+    }
+
+    /// <summary>GET a vSphere resource, returning a cloned root element, or null on HTTP/JSON failure.</summary>
+    private async Task<JsonElement?> TryGetAsync(HttpClient client, string url, string session, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await SendWithRetryAsync(client, () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add("vmware-api-session-id", session);
+                return request;
+            }, ct: ct);
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            return doc.RootElement.Clone();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            Logger.LogDebug(ex, "vCenter GET {Url} returned no usable data", url);
+            return null;
+        }
+    }
+
+    private async Task<string> AcquireSessionAsync(HttpClient client, string baseUrl,
+        ConnectorSettings settings, CancellationToken ct)
+    {
         var auth = Convert.ToBase64String(
             Encoding.UTF8.GetBytes($"{settings.Get("username")}:{settings.Get("password")}"));
         using var response = await SendWithRetryAsync(client, () =>
         {
-            var request = new HttpRequestMessage(HttpMethod.Post,
-                $"{settings.Get("baseUrl").TrimEnd('/')}/api/session");
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/session");
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
             return request;
         }, ct: ct);
-        var session = (await response.Content.ReadAsStringAsync(ct)).Trim('"', ' ', '\n');
-        return session;
+        return (await response.Content.ReadAsStringAsync(ct)).Trim('"', ' ', '\n');
+    }
+
+    // vCenter caps concurrent sessions, so always release the one we opened. Best-effort.
+    private async Task CloseSessionAsync(HttpClient client, string baseUrl, string session, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await SendWithRetryAsync(client, () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Delete, $"{baseUrl}/api/session");
+                request.Headers.Add("vmware-api-session-id", session);
+                return request;
+            }, ct: ct);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "vCenter session close failed");
+        }
+    }
+
+    // vCenter appliances ship with a self-signed cert by default; opt in per connector rather than
+    // trusting it globally. When off, uses the pooled factory client with normal validation.
+    private HttpClient CreateVCenterClient(ConnectorSettings settings)
+    {
+        if (string.Equals(settings.GetOptional("allowSelfSignedCert"), "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return new HttpClient(new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+            });
+        }
+        return CreateClient();
     }
 }
 

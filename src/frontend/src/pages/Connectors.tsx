@@ -118,6 +118,7 @@ const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
     { key: 'baseUrl', label: 'vCenter URL', placeholder: 'https://vcenter.example.com' },
     { key: 'username', label: 'Username' },
     { key: 'password', label: 'Password' },
+    { key: 'allowSelfSignedCert', label: 'Accept self-signed certificate (appliance/lab)', type: 'checkbox' },
   ],
   CrowdStrike: [
     { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.crowdstrike.com' },
@@ -166,7 +167,9 @@ const CONNECTOR_HELP: Record<string, string> = {
   Intune: 'App registration needs DeviceManagementManagedDevices.Read.All (application permission, admin-consented).',
   MicrosoftDefender: 'App registration needs Machine.Read.All on the Microsoft Defender for Endpoint API ' +
     '(application permission, admin-consented).',
-  VmwareVCenter: 'Read-only vCenter account is enough — this only lists VMs, it never changes anything.',
+  VmwareVCenter: 'Read-only vCenter account is enough — this only lists VMs, it never changes anything. ' +
+    'It collects guest hostname/OS, IP + MAC per NIC, CPU/memory and VMware Tools state (guest IP/MAC ' +
+    'need VMware Tools running). Tick "Accept self-signed certificate" for appliances that use one.',
   CrowdStrike: 'API client needs the Hosts: Read scope. Base URL depends on your CrowdStrike cloud region.',
   SentinelOne: 'API token is generated per-user in Settings → Users, or as a dedicated service user.',
   Tenable: 'Access key and secret key come from Tenable.io → Settings → My Account → API Keys.',
