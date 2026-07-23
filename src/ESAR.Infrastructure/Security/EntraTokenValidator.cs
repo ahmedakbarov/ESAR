@@ -50,7 +50,11 @@ public class EntraTokenValidator : IEntraTokenValidator
         ClaimsPrincipal principal;
         try
         {
-            principal = new JwtSecurityTokenHandler().ValidateToken(idToken, parameters, out _);
+            // MapInboundClaims=false keeps Azure's original short claim names (oid,
+            // preferred_username, name) — the default true remaps them to long WS-* URIs, which
+            // makes FindFirstValue("oid") return null even though the claim is present.
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            principal = handler.ValidateToken(idToken, parameters, out _);
         }
         catch (SecurityTokenException ex)
         {
@@ -59,7 +63,7 @@ public class EntraTokenValidator : IEntraTokenValidator
 
         var objectId = principal.FindFirstValue("oid")
             ?? throw new InvalidOperationException("Entra ID token is missing the 'oid' claim.");
-        var email = principal.FindFirstValue("preferred_username") ?? principal.FindFirstValue(ClaimTypes.Email)
+        var email = principal.FindFirstValue("preferred_username") ?? principal.FindFirstValue("email")
             ?? throw new InvalidOperationException("Entra ID token is missing an email claim.");
         var displayName = principal.FindFirstValue("name") ?? email;
 
