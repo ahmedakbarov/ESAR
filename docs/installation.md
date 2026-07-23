@@ -66,9 +66,9 @@ cd src/frontend && npm install && npm run dev  # :5173, proxies /api → :8080
 3. Create connectors (Administration guide §2) and run a health check, then a Full sync.
 4. Review Settings: matching thresholds, `approval.requireForNewAssets`, stale-asset windows.
 5. Configure Azure AD SSO (optional): create an Azure App Registration (Single-page application,
-   redirect URI = ESAR's origin, `openid profile email` permissions), then set `EntraId__TenantId`
-   + `EntraId__ClientId`. The Login page shows a "Sign in with Microsoft" button once both are set
-   — no rebuild needed, `GET /auth/config` picks it up at runtime.
+   redirect URI = ESAR's origin, `openid profile email` permissions), then on the **Settings page**
+   set `auth.entra.tenantId` + `auth.entra.clientId`. The Login page shows a "Sign in with
+   Microsoft" button once both are set — no `.env`, no rebuild.
 6. AD login (optional): once an enabled `ActiveDirectory` connector exists, the Login page shows an
    "Active Directory" tab that authenticates via LDAP bind using the connector's server/baseDn.
 7. For Azure AD SSO / AD login, pre-provision accounts on the Users page (pick the provider, no

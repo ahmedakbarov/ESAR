@@ -1,11 +1,11 @@
 using Asp.Versioning;
 using Esar.Application.Abstractions;
 using Esar.Application.Auth;
+using Esar.Application.Matching;
 using Esar.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.Configuration;
 
 namespace Esar.Api.Controllers;
 
@@ -17,14 +17,12 @@ public class AuthController : ControllerBase
     private readonly IAuthService _auth;
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _uow;
-    private readonly IConfiguration _config;
 
-    public AuthController(IAuthService auth, ICurrentUserService currentUser, IUnitOfWork uow, IConfiguration config)
+    public AuthController(IAuthService auth, ICurrentUserService currentUser, IUnitOfWork uow)
     {
         _auth = auth;
         _currentUser = currentUser;
         _uow = uow;
-        _config = config;
     }
 
     private static object ToResponse(LoginResult result) => new
@@ -82,14 +80,14 @@ public class AuthController : ControllerBase
         return unavailable ? StatusCode(503, new { error = result.Error }) : Unauthorized(new { error = result.Error });
     }
 
-    /// <summary>Tells the frontend which login methods are available, without a rebuild — toggled
-    /// purely by EntraId:TenantId/ClientId config and whether an AD connector is enabled.</summary>
+    /// <summary>Tells the frontend which login methods are available, without a rebuild — driven by
+    /// the Entra tenant/client Settings (UI-editable) and whether an AD connector is enabled.</summary>
     [HttpGet("config")]
     [AllowAnonymous]
     public async Task<IActionResult> Config(CancellationToken ct)
     {
-        var entraTenantId = _config["EntraId:TenantId"];
-        var entraClientId = _config["EntraId:ClientId"];
+        var entraTenantId = (await _uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraTenantId, ct))?.Value;
+        var entraClientId = (await _uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraClientId, ct))?.Value;
         var entraEnabled = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraClientId);
         var ldapEnabled = await _uow.Connectors.FirstOrDefaultAsync(
             c => c.Type == ConnectorType.ActiveDirectory && c.Enabled, ct) is not null;

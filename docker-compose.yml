@@ -60,8 +60,6 @@ services:
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set in .env}
       Security__EncryptionKey: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
       ESAR_ADMIN_INITIAL_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
-      EntraId__TenantId: ${ENTRAID_TENANT_ID:-}
-      EntraId__ClientId: ${ENTRAID_CLIENT_ID:-}
       Database__AutoMigrate: "true"
     volumes:
       - reports-data:/data/reports

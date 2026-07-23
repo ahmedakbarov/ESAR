@@ -141,11 +141,12 @@ public record LdapBindResult(bool Success, LdapBindFailureReason? FailureReason,
 }
 
 /// <summary>Verifies an Entra ID (Azure AD) issued ID token against Microsoft's own OIDC signing
-/// keys — a token's claims are only trusted after its signature is checked, never decoded blind.</summary>
+/// keys — a token's claims are only trusted after its signature is checked, never decoded blind.
+/// Tenant/client come from the Settings table (editable in the UI), read fresh on each call.</summary>
 public interface IEntraTokenValidator
 {
-    /// <summary>True once EntraId:TenantId and EntraId:ClientId are both configured.</summary>
-    bool IsConfigured { get; }
+    /// <summary>Throws InvalidOperationException("Entra ID SSO is not configured.") when the
+    /// tenant/client settings are blank.</summary>
     Task<EntraTokenClaims> ValidateAsync(string idToken, CancellationToken ct = default);
 }
 

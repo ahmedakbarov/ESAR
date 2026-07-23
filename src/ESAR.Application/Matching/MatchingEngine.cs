@@ -287,4 +287,6 @@ public static class SettingKeys
     public const string ComplianceEvidenceMaxAgeDays = "compliance.evidenceMaxAgeDays";
     public const string ApprovalRequireForNewAssets = "approval.requireForNewAssets";
     public const string AuthFederatedAutoProvision = "auth.federated.autoProvision";
+    public const string AuthEntraTenantId = "auth.entra.tenantId";
+    public const string AuthEntraClientId = "auth.entra.clientId";
 }

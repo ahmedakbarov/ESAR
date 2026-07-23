@@ -55,10 +55,11 @@ public static class DependencyInjection
         // --- Security ---
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<SecretProtectorOptions>(configuration.GetSection("Security"));
-        services.Configure<EntraIdOptions>(configuration.GetSection("EntraId"));
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ISecretProtector, AesSecretProtector>();
+        // Entra ID tenant/client come from the Settings table (UI-editable), not config — the
+        // validator reads them per-call, so this stays a singleton without bound options.
         services.AddSingleton<IEntraTokenValidator, EntraTokenValidator>();
         services.AddScoped<ILdapLoginService, LdapLoginService>();
         services.AddHttpContextAccessor();
