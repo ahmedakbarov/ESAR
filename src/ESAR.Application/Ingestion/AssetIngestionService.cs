@@ -104,16 +104,17 @@ public class AssetIngestionService : IAssetIngestionService
             case MatchDecision.AutoMerged when match.MatchedAsset is not null:
                 record.MatchedAssetId = match.MatchedAsset.Id;
                 await UpdateExistingAsync(match.MatchedAsset, normalized, ct);
-                foreach (var pending in await _uow.MatchRecords.ListAsync(existing =>
+                foreach (var pendingReview in await _uow.MatchRecords.ListAsync(existing =>
                              existing.SourceConnector == normalized.Source &&
                              existing.ExternalId == normalized.ExternalId &&
                              existing.Decision == MatchDecision.QueuedForReview, ct))
                 {
-                    pending.Decision = MatchDecision.Approved;
-                    pending.ReviewedBy = "system:auto-match";
-                    pending.ReviewedAt = DateTime.UtcNow;
-                    pending.ReviewComment = "Automatically resolved after stronger identity evidence arrived.";
-                    _uow.MatchRecords.Update(pending);
+                    pendingReview.Decision = MatchDecision.Approved;
+                    pendingReview.ReviewedBy = "system:auto-match";
+                    pendingReview.ReviewedAt = DateTime.UtcNow;
+                    pendingReview.ReviewComment =
+                        "Automatically resolved after stronger identity evidence arrived.";
+                    _uow.MatchRecords.Update(pendingReview);
                 }
                 await _uow.MatchRecords.AddAsync(record, ct);
                 await _uow.SaveChangesAsync(ct);
@@ -124,22 +125,22 @@ public class AssetIngestionService : IAssetIngestionService
             case MatchDecision.QueuedForReview when match.MatchedAsset is not null:
                 // Ambiguous — park the candidate for a human decision; do not touch the golden record.
                 record.MatchedAssetId = match.MatchedAsset.Id;
-                var pending = await _uow.MatchRecords.FirstOrDefaultAsync(existing =>
+                var existingPending = await _uow.MatchRecords.FirstOrDefaultAsync(existing =>
                     existing.SourceConnector == normalized.Source &&
                     existing.ExternalId == normalized.ExternalId &&
                     existing.Decision == MatchDecision.QueuedForReview, ct);
-                if (pending is null)
+                if (existingPending is null)
                     await _uow.MatchRecords.AddAsync(record, ct);
                 else
                 {
-                    pending.CandidateHostname = record.CandidateHostname;
-                    pending.MatchedAssetId = record.MatchedAssetId;
-                    pending.ConfidenceScore = record.ConfidenceScore;
-                    pending.MatchType = record.MatchType;
-                    pending.ExplanationJson = record.ExplanationJson;
-                    pending.CandidateJson = record.CandidateJson;
-                    pending.UpdatedAt = DateTime.UtcNow;
-                    _uow.MatchRecords.Update(pending);
+                    existingPending.CandidateHostname = record.CandidateHostname;
+                    existingPending.MatchedAssetId = record.MatchedAssetId;
+                    existingPending.ConfidenceScore = record.ConfidenceScore;
+                    existingPending.MatchType = record.MatchType;
+                    existingPending.ExplanationJson = record.ExplanationJson;
+                    existingPending.CandidateJson = record.CandidateJson;
+                    existingPending.UpdatedAt = DateTime.UtcNow;
+                    _uow.MatchRecords.Update(existingPending);
                 }
                 await _uow.SaveChangesAsync(ct);
                 _logger.LogInformation("Candidate {ExternalId} from {Source} queued for review (score {Score})",

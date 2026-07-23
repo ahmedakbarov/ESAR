@@ -228,7 +228,8 @@ public class MatchingEngine : IMatchingEngine
         return result;
     }
 
-    private static (decimal Score, List<MatchExplanation>) ScoreCandidate(DiscoveredAsset candidate, Asset asset,
+    private static (decimal Score, List<MatchExplanation> Explanations) ScoreCandidate(
+        DiscoveredAsset candidate, Asset asset,
         List<MatchingRule> rules, string normalizedHostname, List<string> macs, List<string> ips,
         DateTime networkEvidenceCutoff)
     {
