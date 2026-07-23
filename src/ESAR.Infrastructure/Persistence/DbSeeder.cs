@@ -80,7 +80,17 @@ public static class DbSeeder
     private static async Task SeedAdminUserAsync(EsarDbContext db, IPasswordHasher hasher, ILogger logger,
         CancellationToken ct)
     {
-        if (await db.Users.AnyAsync(u => u.Username == "admin", ct)) return;
+        var existingAdmin = await db.Users.FirstOrDefaultAsync(u => u.Username == "admin", ct);
+        if (existingAdmin is not null)
+        {
+            // Backfill for deployments seeded before IsProtected existed.
+            if (!existingAdmin.IsProtected)
+            {
+                existingAdmin.IsProtected = true;
+                db.Users.Update(existingAdmin);
+            }
+            return;
+        }
 
         var initialPassword = Environment.GetEnvironmentVariable("ESAR_ADMIN_INITIAL_PASSWORD");
         if (string.IsNullOrWhiteSpace(initialPassword))
@@ -97,7 +107,8 @@ public static class DbSeeder
             DisplayName = "ESAR Administrator",
             PasswordHash = hasher.Hash(initialPassword),
             AuthProvider = AuthProvider.Local,
-            IsActive = true
+            IsActive = true,
+            IsProtected = true
         };
         db.Users.Add(admin);
         var adminRole = await db.Roles.FirstAsync(r => r.Name == "Administrator", ct);
