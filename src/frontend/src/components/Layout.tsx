@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
@@ -11,11 +11,22 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [minLength, setMinLength] = useState(12);
+
+  useEffect(() => {
+    client.get('/settings')
+      .then((r) => {
+        const setting = r.data?.find((s: any) => s.key === 'security.password.minLength');
+        const value = Number(setting?.value);
+        if (value > 0) setMinLength(value);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const submit = async () => {
     setError('');
     if (next !== confirm) { setError('New passwords do not match'); return; }
-    if (next.length < 12) { setError('Password must be at least 12 characters'); return; }
+    if (next.length < minLength) { setError(`Password must be at least ${minLength} characters`); return; }
     setBusy(true);
     try {
       await client.post('/auth/change-password', { currentPassword: current, newPassword: next });
@@ -38,8 +49,8 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <input type="password" placeholder="Current password" value={current}
             autoComplete="current-password" onChange={(e) => setCurrent(e.target.value)} />
-          <input type="password" placeholder="New password (12+ chars)" value={next}
-            autoComplete="new-password" minLength={12} onChange={(e) => setNext(e.target.value)} />
+          <input type="password" placeholder={`New password (${minLength}+ chars)`} value={next}
+            autoComplete="new-password" minLength={minLength} onChange={(e) => setNext(e.target.value)} />
           <input type="password" placeholder="Confirm new password" value={confirm}
             autoComplete="new-password" onChange={(e) => setConfirm(e.target.value)} />
           {error && <div className="error">{error}</div>}

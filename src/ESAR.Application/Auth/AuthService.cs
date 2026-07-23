@@ -24,9 +24,10 @@ public record ChangePasswordResult(bool Success, string? Error);
 
 public class AuthService : IAuthService
 {
-    private const int MaxFailedAttempts = 5;
-    private const int MinPasswordLength = 12;
-    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+    private const int DefaultMaxFailedAttempts = 5;
+    private const int DefaultMinPasswordLength = 12;
+    private const int DefaultLockoutMinutes = 15;
+    private const int DefaultTokenLifetimeMinutes = 60;
 
     private readonly IUnitOfWork _uow;
     private readonly IPasswordHasher _hasher;
@@ -59,12 +60,17 @@ public class AuthService : IAuthService
         if (user.LockedOutUntil is { } lockedUntil && lockedUntil > DateTime.UtcNow)
             return new LoginResult(false, null, null, "Account temporarily locked");
 
+        var maxFailedAttempts = await GetIntSettingAsync(
+            SettingKeys.SecurityLoginMaxFailedAttempts, DefaultMaxFailedAttempts, ct);
+        var lockoutMinutes = await GetIntSettingAsync(
+            SettingKeys.SecurityLoginLockoutMinutes, DefaultLockoutMinutes, ct);
+
         if (user.PasswordHash is null || !_hasher.Verify(password, user.PasswordHash))
         {
             user.FailedLoginAttempts++;
-            if (user.FailedLoginAttempts >= MaxFailedAttempts)
+            if (user.FailedLoginAttempts >= maxFailedAttempts)
             {
-                user.LockedOutUntil = DateTime.UtcNow.Add(LockoutDuration);
+                user.LockedOutUntil = DateTime.UtcNow.AddMinutes(lockoutMinutes);
                 user.FailedLoginAttempts = 0;
                 _logger.LogWarning("User {User} locked out after repeated failures", username);
             }
@@ -129,7 +135,9 @@ public class AuthService : IAuthService
         _uow.Users.Update(user);
         var roles = await GetRolesAsync(user.Id, ct);
         var permissions = await GetPermissionsAsync(user.Id, ct);
-        var (token, expires) = _jwt.CreateToken(user, roles, permissions);
+        var tokenLifetime = await GetIntSettingAsync(
+            SettingKeys.SecuritySessionTokenLifetimeMinutes, DefaultTokenLifetimeMinutes, ct);
+        var (token, expires) = _jwt.CreateToken(user, roles, permissions, tokenLifetime);
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.Login, nameof(User), user.Id.ToString(),
             new { user.Username, provider = user.AuthProvider.ToString() }, ct);
@@ -207,8 +215,10 @@ public class AuthService : IAuthService
         if (!_hasher.Verify(currentPassword, user.PasswordHash))
             return new ChangePasswordResult(false, "Current password is incorrect");
 
-        if (newPassword.Length < MinPasswordLength)
-            return new ChangePasswordResult(false, $"Password must be at least {MinPasswordLength} characters");
+        var minPasswordLength = await GetIntSettingAsync(
+            SettingKeys.SecurityPasswordMinLength, DefaultMinPasswordLength, ct);
+        if (newPassword.Length < minPasswordLength)
+            return new ChangePasswordResult(false, $"Password must be at least {minPasswordLength} characters");
 
         if (_hasher.Verify(newPassword, user.PasswordHash))
             return new ChangePasswordResult(false, "New password must be different from the current password");
@@ -238,5 +248,13 @@ public class AuthService : IAuthService
     {
         var roles = await _uow.Roles.ListAsync(r => r.UserRoles.Any(ur => ur.UserId == userId), ct);
         return roles.Select(r => r.Name).ToList();
+    }
+
+    private async Task<int> GetIntSettingAsync(string key, int fallback, CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(s => s.Key == key, ct);
+        if (setting is null || !int.TryParse(setting.Value, out var value) || value <= 0)
+            return fallback;
+        return value;
     }
 }

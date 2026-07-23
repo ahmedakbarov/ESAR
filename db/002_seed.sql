@@ -70,5 +70,11 @@ VALUES
   (gen_random_uuid(), 'lifecycle.decommissionAfterDays', '90', 'Days without telemetry before automatic decommission', false, now(), now()),
   (gen_random_uuid(), 'compliance.evidenceMaxAgeDays', '7', 'Max age of source evidence for compliance controls', false, now(), now()),
   (gen_random_uuid(), 'notifications.defaultRecipient', 'soc@example.com', 'Default notification recipient', false, now(), now()),
-  (gen_random_uuid(), 'reports.outputDirectory', '/data/reports', 'Directory where generated reports are stored', false, now(), now())
+  (gen_random_uuid(), 'reports.outputDirectory', '/data/reports', 'Directory where generated reports are stored', false, now(), now()),
+  (gen_random_uuid(), 'security.password.minLength', '12', 'Minimum password length for local accounts and password reset operations', false, now(), now()),
+  (gen_random_uuid(), 'security.login.maxFailedAttempts', '5', 'Maximum failed login attempts before a local account is locked', false, now(), now()),
+  (gen_random_uuid(), 'security.login.lockoutMinutes', '15', 'Minutes a local account remains locked after too many failed login attempts', false, now(), now()),
+  (gen_random_uuid(), 'security.session.tokenLifetimeMinutes', '60', 'JWT access-token lifetime in minutes for authenticated sessions', false, now(), now()),
+  (gen_random_uuid(), 'security.session.idleTimeoutMinutes', '30', 'Idle-session timeout in minutes used by the portal UX', false, now(), now()),
+  (gen_random_uuid(), 'security.audit.retentionDays', '180', 'Number of days to retain security and administration audit events', false, now(), now())
 ON CONFLICT ("Key") DO NOTHING;

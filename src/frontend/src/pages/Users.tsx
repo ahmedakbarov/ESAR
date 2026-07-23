@@ -3,8 +3,8 @@ import client from '../api/client';
 import { Badge, formatDate, Modal } from '../components/Ui';
 import { useAuth } from '../auth/AuthContext';
 
-function ResetPasswordModal({ user, onClose, onDone }: {
-  user: { id: string; username: string }; onClose: () => void; onDone: () => void;
+function ResetPasswordModal({ user, onClose, onDone, minPasswordLength }: {
+  user: { id: string; username: string }; onClose: () => void; onDone: () => void; minPasswordLength: number;
 }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -12,7 +12,10 @@ function ResetPasswordModal({ user, onClose, onDone }: {
 
   const submit = async () => {
     setError('');
-    if (password.length < 12) { setError('Password must be at least 12 characters'); return; }
+    if (password.length < minPasswordLength) {
+      setError(`Password must be at least ${minPasswordLength} characters`);
+      return;
+    }
     setBusy(true);
     try {
       await client.put(`/users/${user.id}`, { newPassword: password });
@@ -30,8 +33,8 @@ function ResetPasswordModal({ user, onClose, onDone }: {
         <p className="muted" style={{ margin: 0 }}>
           Sets a new password for this user. Share it over a secure channel; they should change it after signing in.
         </p>
-        <input type="password" placeholder="New password (12+ chars)" value={password}
-          autoComplete="new-password" minLength={12} onChange={(e) => setPassword(e.target.value)} />
+        <input type="password" placeholder={`New password (${minPasswordLength}+ chars)`} value={password}
+          autoComplete="new-password" minLength={minPasswordLength} onChange={(e) => setPassword(e.target.value)} />
         {error && <div className="error">{error}</div>}
         <div>
           <button disabled={busy || !password} onClick={submit}>{busy ? 'Saving…' : 'Reset password'}</button>
@@ -53,10 +56,18 @@ export default function Users() {
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null);
   const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
+  const [minPasswordLength, setMinPasswordLength] = useState(12);
 
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
     client.get('/roles').then((r) => setRoles(r.data));
+    client.get('/settings')
+      .then((r) => {
+        const setting = r.data?.find((s: any) => s.key === 'security.password.minLength');
+        const value = Number(setting?.value);
+        if (value > 0) setMinPasswordLength(value);
+      })
+      .catch(() => undefined);
   };
   useEffect(load, []);
 
@@ -144,8 +155,9 @@ export default function Users() {
               <option value="Ldap">Active Directory (AD login)</option>
             </select>
             {form.provider === 'Local' && (
-              <input placeholder="Password (12+ chars)" type="password" value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={12} />
+              <input placeholder={`Password (${minPasswordLength}+ chars)`} type="password" value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                required minLength={minPasswordLength} />
             )}
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {roles.map((r) => <option key={r.id}>{r.name}</option>)}
@@ -232,6 +244,7 @@ export default function Users() {
           user={resetUser}
           onClose={() => setResetUser(null)}
           onDone={() => { setNotice(`Password reset for ${resetUser.username}.`); setResetUser(null); load(); }}
+          minPasswordLength={minPasswordLength}
         />
       )}
     </>

@@ -60,7 +60,7 @@ public interface IPasswordHasher
 public interface IJwtTokenService
 {
     (string Token, DateTime ExpiresAt) CreateToken(User user, IReadOnlyCollection<string> roles,
-        IReadOnlyCollection<string> permissions);
+        IReadOnlyCollection<string> permissions, int? lifetimeMinutes = null);
 }
 
 /// <summary>Protects connector secrets at rest (AES-256, key from secret store).</summary>

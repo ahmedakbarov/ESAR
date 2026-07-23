@@ -25,12 +25,13 @@ public class JwtTokenService : IJwtTokenService
     public JwtTokenService(IOptions<JwtOptions> options) => _options = options.Value;
 
     public (string Token, DateTime ExpiresAt) CreateToken(User user, IReadOnlyCollection<string> roles,
-        IReadOnlyCollection<string> permissions)
+        IReadOnlyCollection<string> permissions, int? lifetimeMinutes = null)
     {
         if (string.IsNullOrWhiteSpace(_options.SigningKey) || _options.SigningKey.Length < 32)
             throw new InvalidOperationException("Jwt:SigningKey must be configured with at least 32 characters.");
 
-        var expires = DateTime.UtcNow.AddMinutes(_options.TokenLifetimeMinutes);
+        var minutes = lifetimeMinutes is > 0 ? lifetimeMinutes.Value : _options.TokenLifetimeMinutes;
+        var expires = DateTime.UtcNow.AddMinutes(minutes);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
