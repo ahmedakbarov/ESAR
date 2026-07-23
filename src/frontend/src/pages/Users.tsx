@@ -46,7 +46,9 @@ export default function Users() {
   const [users, setUsers] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ username: '', email: '', displayName: '', password: '', role: 'Viewer' });
+  const [form, setForm] = useState({
+    username: '', email: '', displayName: '', password: '', provider: 'Local', role: 'Viewer',
+  });
   const [error, setError] = useState('');
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null);
   const [notice, setNotice] = useState('');
@@ -106,9 +108,13 @@ export default function Users() {
     e.preventDefault();
     setError('');
     try {
-      await client.post('/users', { ...form, roles: [form.role] });
+      // The password field is hidden for federated providers, but form state can still hold a
+      // stale value from before the provider was switched — strip it so we never send one.
+      const { password, ...rest } = form;
+      const payload = { ...rest, password: form.provider === 'Local' ? password : null, roles: [form.role] };
+      await client.post('/users', payload);
       setShowForm(false);
-      setForm({ username: '', email: '', displayName: '', password: '', role: 'Viewer' });
+      setForm({ username: '', email: '', displayName: '', password: '', provider: 'Local', role: 'Viewer' });
       load();
     } catch (err: any) {
       setError(err.response?.data?.error ?? 'Failed to create user');
@@ -132,8 +138,15 @@ export default function Users() {
               onChange={(e) => setForm({ ...form, email: e.target.value })} required />
             <input placeholder="Display name" value={form.displayName}
               onChange={(e) => setForm({ ...form, displayName: e.target.value })} required />
-            <input placeholder="Password (12+ chars)" type="password" value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={12} />
+            <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
+              <option value="Local">Local (password)</option>
+              <option value="EntraId">Azure AD / Entra ID (SSO)</option>
+              <option value="Ldap">Active Directory (AD login)</option>
+            </select>
+            {form.provider === 'Local' && (
+              <input placeholder="Password (12+ chars)" type="password" value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={12} />
+            )}
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {roles.map((r) => <option key={r.id}>{r.name}</option>)}
             </select>

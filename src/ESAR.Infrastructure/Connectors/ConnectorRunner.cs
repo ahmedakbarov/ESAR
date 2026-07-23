@@ -158,12 +158,5 @@ public class ConnectorRunner : IConnectorRunner
         return job;
     }
 
-    private ConnectorSettings ParseSettings(string settingsJson)
-    {
-        var raw = JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson) ?? new();
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in raw)
-            values[key] = value.StartsWith("enc:") ? _secrets.Unprotect(value) : value;
-        return new ConnectorSettings { Values = values };
-    }
+    private ConnectorSettings ParseSettings(string settingsJson) => ConnectorSettingsCodec.Decrypt(settingsJson, _secrets);
 }

@@ -46,40 +46,33 @@ builder.Services.AddApiVersioning(o =>
     o.SubstituteApiVersionInUrl = true;
 });
 
-// ---------- Authentication: local JWT + optional Entra ID ----------
+// ---------- Authentication: ESAR-issued JWT only ----------
+// Entra ID (Azure AD SSO) and AD (LDAP) login are handled by AuthController's token-exchange
+// endpoints (/auth/login/entra, /auth/login/ldap) — the browser authenticates against the
+// external IdP once, then gets back a normal ESAR "Local"-scheme JWT identical to a password
+// login's, with roles/permissions already baked in. There is deliberately no second bearer
+// scheme here: an Entra ID-issued token accepted directly would carry Microsoft's claims, not
+// ESAR's DB-driven "permission" claims, so it could authenticate a request but never authorize one.
 var jwtKey = builder.Configuration["Jwt:SigningKey"] ?? string.Empty;
-var entraEnabled = !string.IsNullOrWhiteSpace(builder.Configuration["EntraId:TenantId"]);
-var schemes = entraEnabled ? new[] { "Local", "EntraId" } : new[] { "Local" };
 
-var auth = builder.Services.AddAuthentication(o => o.DefaultScheme = "Local");
-auth.AddJwtBearer("Local", o =>
-{
-    o.TokenValidationParameters = new TokenValidationParameters
+builder.Services.AddAuthentication(o => o.DefaultScheme = "Local")
+    .AddJwtBearer("Local", o =>
     {
-        ValidateIssuer = true,
-        ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "esar",
-        ValidateAudience = true,
-        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "esar-clients",
-        ValidateLifetime = true,
-        ClockSkew = TimeSpan.FromSeconds(30),
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
-    };
-});
-if (entraEnabled)
-{
-    auth.AddJwtBearer("EntraId", o =>
-    {
-        o.Authority = $"https://login.microsoftonline.com/{builder.Configuration["EntraId:TenantId"]}/v2.0";
         o.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidAudience = builder.Configuration["EntraId:Audience"]
+            ValidateIssuer = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "esar",
+            ValidateAudience = true,
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "esar-clients",
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
         };
     });
-}
 
 builder.Services.AddAuthorization(options =>
 {
-    options.DefaultPolicy = new AuthorizationPolicyBuilder(schemes)
+    options.DefaultPolicy = new AuthorizationPolicyBuilder("Local")
         .RequireAuthenticatedUser().Build();
     options.FallbackPolicy = options.DefaultPolicy;
 
@@ -95,7 +88,7 @@ builder.Services.AddAuthorization(options =>
     foreach (var permission in permissions)
     {
         options.AddPolicy(permission, policy => policy
-            .AddAuthenticationSchemes(schemes)
+            .AddAuthenticationSchemes("Local")
             .RequireAuthenticatedUser()
             .RequireAssertion(ctx =>
                 ctx.User.HasClaim("permission", permission) || ctx.User.IsInRole("Administrator")));

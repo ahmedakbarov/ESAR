@@ -237,14 +237,8 @@ public class ConnectorsController : ControllerBase
         return JsonSerializer.Serialize(existing);
     }
 
-    private ConnectorSettings DecryptSettings(string settingsJson)
-    {
-        var raw = JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson) ?? new();
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in raw)
-            values[key] = value.StartsWith("enc:") ? _secrets.Unprotect(value) : value;
-        return new ConnectorSettings { Values = values };
-    }
+    private ConnectorSettings DecryptSettings(string settingsJson) =>
+        Esar.Infrastructure.Connectors.ConnectorSettingsCodec.Decrypt(settingsJson, _secrets);
 
     private static Dictionary<string, string> MaskSettings(string settingsJson)
     {

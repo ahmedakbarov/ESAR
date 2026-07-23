@@ -55,9 +55,12 @@ public static class DependencyInjection
         // --- Security ---
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<SecretProtectorOptions>(configuration.GetSection("Security"));
+        services.Configure<EntraIdOptions>(configuration.GetSection("EntraId"));
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ISecretProtector, AesSecretProtector>();
+        services.AddSingleton<IEntraTokenValidator, EntraTokenValidator>();
+        services.AddScoped<ILdapLoginService, LdapLoginService>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
 
