@@ -41,7 +41,7 @@ public class UsersController : ControllerBase
         return Ok(users.Select(u => new
         {
             u.Id, u.Username, u.Email, u.DisplayName, Provider = u.AuthProvider.ToString(),
-            u.IsActive, u.IsProtected, u.MfaEnabled, u.LastLoginAt,
+            u.IsActive, u.IsProtected, u.MfaEnabled, u.LastLoginAt, u.FailedLoginAttempts, u.LockedOutUntil,
             Roles = userRoles.TryGetValue(u.Id, out var r) ? r : new List<string>()
         }));
     }
@@ -128,6 +128,25 @@ public class UsersController : ControllerBase
         _uow.Users.Update(user);
         await _uow.SaveChangesAsync(ct);
         await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(), null, ct);
+        return Ok(new { user.Id });
+    }
+
+    [HttpPost("{id:guid}/unlock")]
+    [Authorize("users.manage")]
+    public async Task<IActionResult> Unlock(Guid id, CancellationToken ct)
+    {
+        var user = await _uow.Users.GetByIdAsync(id, ct);
+        if (user is null) return NotFound();
+        if (user.AuthProvider != AuthProvider.Local)
+            return BadRequest(new { error = "Only local password accounts can be unlocked in ESAR." });
+
+        user.FailedLoginAttempts = 0;
+        user.LockedOutUntil = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        _uow.Users.Update(user);
+        await _uow.SaveChangesAsync(ct);
+        await _audit.LogAsync(AuditAction.UserUpdated, nameof(User), user.Id.ToString(),
+            new { action = "account_unlocked", user.Username }, ct);
         return Ok(new { user.Id });
     }
 

@@ -73,6 +73,9 @@ public class AuthService : IAuthService
                 user.LockedOutUntil = DateTime.UtcNow.AddMinutes(lockoutMinutes);
                 user.FailedLoginAttempts = 0;
                 _logger.LogWarning("User {User} locked out after repeated failures", username);
+                _uow.Users.Update(user);
+                await _uow.SaveChangesAsync(ct);
+                return new LoginResult(false, null, null, "Account temporarily locked");
             }
             _uow.Users.Update(user);
             await _uow.SaveChangesAsync(ct);

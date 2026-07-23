@@ -90,6 +90,8 @@ public class AuthController : ControllerBase
         var entraClientId = (await _uow.Settings.FirstOrDefaultAsync(s => s.Key == SettingKeys.AuthEntraClientId, ct))?.Value;
         var idleTimeoutMinutes = await GetIntSettingAsync(
             SettingKeys.SecuritySessionIdleTimeoutMinutes, fallback: 30, ct);
+        var minPasswordLength = await GetIntSettingAsync(
+            SettingKeys.SecurityPasswordMinLength, fallback: 12, ct);
         var entraEnabled = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraClientId);
         var ldapEnabled = await _uow.Connectors.FirstOrDefaultAsync(
             c => c.Type == ConnectorType.ActiveDirectory && c.Enabled, ct) is not null;
@@ -98,6 +100,7 @@ public class AuthController : ControllerBase
             entraEnabled,
             ldapEnabled,
             idleTimeoutMinutes,
+            minPasswordLength,
             entraTenantId = entraEnabled ? entraTenantId : null,
             entraClientId = entraEnabled ? entraClientId : null
         });

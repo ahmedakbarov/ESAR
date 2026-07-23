@@ -2,6 +2,7 @@ using Esar.Application.Abstractions;
 using Esar.Application.Compliance;
 using Esar.Application.Incidents;
 using Esar.Application.Lifecycle;
+using Esar.Application.Matching;
 using Esar.Application.Notifications;
 using Esar.Domain.Enums;
 using Hangfire;
@@ -146,12 +147,16 @@ public class MaintenanceJobs
     [AutomaticRetry(Attempts = 2)]
     public async Task ProcessLifecycleAsync(CancellationToken ct) => await _lifecycle.ProcessStaleAssetsAsync(ct);
 
-    /// <summary>Purges old telemetry per retention policy (events 90d, jobs 30d, notifications 30d).</summary>
+    /// <summary>Purges old telemetry per retention policy (audit configurable, jobs/notifications 30d).</summary>
     [AutomaticRetry(Attempts = 2)]
     public async Task CleanupAsync(CancellationToken ct)
     {
-        var eventCutoff = DateTime.UtcNow.AddDays(-90);
+        var auditRetentionDays = await GetIntSettingAsync(SettingKeys.SecurityAuditRetentionDays, 180, ct);
+        var auditCutoff = DateTime.UtcNow.AddDays(-auditRetentionDays);
         var jobCutoff = DateTime.UtcNow.AddDays(-30);
+
+        var oldAuditLogs = await _uow.AuditLogs.ListAsync(a => a.Timestamp < auditCutoff, ct);
+        foreach (var auditLog in oldAuditLogs) _uow.AuditLogs.Remove(auditLog);
 
         var oldJobs = await _uow.ConnectorJobs.ListAsync(j => j.CreatedAt < jobCutoff, ct);
         foreach (var job in oldJobs) _uow.ConnectorJobs.Remove(job);
@@ -161,8 +166,17 @@ public class MaintenanceJobs
         foreach (var notification in oldNotifications) _uow.Notifications.Remove(notification);
 
         await _uow.SaveChangesAsync(ct);
-        _logger.LogInformation("Cleanup removed {Jobs} jobs and {Notifications} notifications (event cutoff {Cutoff})",
-            oldJobs.Count, oldNotifications.Count, eventCutoff);
+        _logger.LogInformation(
+            "Cleanup removed {AuditLogs} audit logs, {Jobs} jobs and {Notifications} notifications",
+            oldAuditLogs.Count, oldJobs.Count, oldNotifications.Count);
+    }
+
+    private async Task<int> GetIntSettingAsync(string key, int fallback, CancellationToken ct)
+    {
+        var setting = await _uow.Settings.FirstOrDefaultAsync(s => s.Key == key, ct);
+        if (setting is null || !int.TryParse(setting.Value, out var value) || value <= 0)
+            return fallback;
+        return value;
     }
 
     /// <summary>Escalates aged high-severity incidents per escalation rules.</summary>

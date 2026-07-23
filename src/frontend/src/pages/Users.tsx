@@ -61,10 +61,9 @@ export default function Users() {
   const load = () => {
     client.get('/users').then((r) => setUsers(r.data));
     client.get('/roles').then((r) => setRoles(r.data));
-    client.get('/settings')
+    client.get('/auth/config')
       .then((r) => {
-        const setting = r.data?.find((s: any) => s.key === 'security.password.minLength');
-        const value = Number(setting?.value);
+        const value = Number(r.data?.minPasswordLength);
         if (value > 0) setMinPasswordLength(value);
       })
       .catch(() => undefined);
@@ -112,6 +111,17 @@ export default function Users() {
       load();
     } catch (err: any) {
       setActionError(err.response?.data?.error ?? 'Delete failed');
+    }
+  };
+
+  const unlockUser = async (u: any) => {
+    setActionError('');
+    try {
+      await client.post(`/users/${u.id}/unlock`);
+      setNotice(`Unlocked ${u.username}.`);
+      load();
+    } catch (err: any) {
+      setActionError(err.response?.data?.error ?? 'Unlock failed');
     }
   };
 
@@ -169,12 +179,14 @@ export default function Users() {
         <table className="data">
           <thead>
             <tr><th>Username</th><th>Display Name</th><th>Email</th><th>Provider</th>
-              <th>Roles</th><th>Active</th><th>Last Login</th><th>Actions</th></tr>
+              <th>Roles</th><th>Status</th><th>Last Login</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {users.map((u) => {
               const isSelf = !!myUserId && u.id === myUserId;
               const isLastManager = managerIds.length === 1 && managerIds[0] === u.id;
+              const lockedUntil = u.lockedOutUntil ? new Date(u.lockedOutUntil) : null;
+              const isLocked = !!lockedUntil && lockedUntil > new Date();
               const deleteBlock = u.isProtected ? 'This is a protected account and cannot be deleted.'
                 : isSelf ? 'You cannot delete your own account.'
                 : isLastManager ? 'This is the last user with user-management permission.' : undefined;
@@ -188,11 +200,26 @@ export default function Users() {
                   <td className="muted">{u.email}</td>
                   <td><Badge value={u.provider} /></td>
                   <td>{u.roles.map((r: string) => <span key={r} className="badge blue" style={{ marginRight: 4 }}>{r}</span>)}</td>
-                  <td>{u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {u.isActive ? <Badge value="Active" /> : <Badge value="Inactive" />}
+                      {isLocked && <span className="badge red" title={`Locked until ${formatDate(u.lockedOutUntil)}`}>Locked</span>}
+                      {!isLocked && u.failedLoginAttempts > 0 && (
+                        <span className="badge amber" title="Failed local-password login attempts">
+                          {u.failedLoginAttempts} failed
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="muted">{formatDate(u.lastLoginAt)}</td>
                   <td>
                     {u.isProtected ? (
-                      <span className="muted" style={{ fontSize: 12 }}>protected</span>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span className="muted" style={{ fontSize: 12 }}>protected</span>
+                        {u.provider === 'Local' && isLocked && (
+                          <button className="secondary" onClick={() => unlockUser(u)}>Unlock</button>
+                        )}
+                      </div>
                     ) : (
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         {u.provider === 'Local' && (
@@ -200,6 +227,9 @@ export default function Users() {
                             onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
                             Reset password
                           </button>
+                        )}
+                        {u.provider === 'Local' && isLocked && (
+                          <button className="secondary" onClick={() => unlockUser(u)}>Unlock</button>
                         )}
                         <button className="secondary" onClick={() => toggleActive(u)}>
                           {u.isActive ? 'Deactivate' : 'Activate'}
