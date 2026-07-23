@@ -103,6 +103,31 @@ input:focus, select:focus { border-color: var(--accent); }
 .kv dt { color: var(--muted); }
 .section-title { margin: 22px 0 10px; font-size: 15px; }
 .muted { color: var(--muted); }
+
+/* Settings page */
+.settings-toolbar {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.settings-toolbar input[type=search] { width: 260px; }
+.settings-group { margin-bottom: 16px; }
+.setting-row {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 24px; padding: 14px 0; border-bottom: 1px solid var(--border);
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-row:first-child { padding-top: 4px; }
+.setting-row .meta { min-width: 0; }
+.setting-row .meta label { font-weight: 600; display: block; color: var(--text); }
+.setting-row .meta .key {
+  font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; margin-top: 2px;
+}
+.setting-row .meta .desc { font-size: 12px; margin-top: 4px; max-width: 540px; line-height: 1.4; }
+.setting-row .meta .stamp { font-size: 11px; margin-top: 5px; }
+.setting-row .control { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.setting-row .control .status { font-size: 12px; min-width: 46px; text-align: right; }
+.setting-row .control .status.ok { color: var(--green); }
+.setting-row .control .status.err { color: var(--red); }
 pre.json {
   background: var(--panel-2); padding: 12px; border-radius: 8px; overflow: auto;
   font-size: 12px; max-height: 300px;

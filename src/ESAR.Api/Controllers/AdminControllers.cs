@@ -333,7 +333,7 @@ public class SettingsController : ControllerBase
         var settings = await _uow.Settings.ListAsync(null, ct);
         return Ok(settings.Select(s => new
         {
-            s.Id, s.Key, Value = s.IsEncrypted ? "***" : s.Value, s.Description, s.UpdatedBy, s.UpdatedAt
+            s.Id, s.Key, Value = s.IsEncrypted ? "***" : s.Value, s.Description, s.IsEncrypted, s.UpdatedBy, s.UpdatedAt
         }));
     }
 
