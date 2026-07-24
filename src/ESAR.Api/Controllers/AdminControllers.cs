@@ -3,6 +3,7 @@ using Asp.Versioning;
 using Esar.Application.Abstractions;
 using Esar.Application.Auditing;
 using Esar.Application.Matching;
+using Esar.Domain.Common;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -339,17 +340,60 @@ public class AuditController : ControllerBase
             }
             return q.OrderByDescending(l => l.Timestamp);
         }, page, pageSize, ct);
+        var items = result.Items.ToList();
+        var names = await ResolveEntityNamesAsync(items, ct);
         return Ok(new
         {
             totalCount = result.TotalCount,
             page = result.Page,
             pageSize = result.PageSize,
-            items = result.Items.Select(l => new
+            items = items.Select(l => new
             {
                 l.Id, l.UserName, Action = l.Action.ToString(), l.EntityType, l.EntityId,
+                EntityName = l.EntityType != null && l.EntityId != null &&
+                    names.TryGetValue((l.EntityType, l.EntityId), out var nm) ? nm : null,
                 l.Details, l.IpAddress, l.Timestamp
             })
         });
+    }
+
+    // Audit rows reference an entity by type + GUID; resolve a human-readable name per referenced
+    // entity so the UI shows "web-prod-01" instead of a raw id. Batched: one query per type on the page.
+    private async Task<Dictionary<(string Type, string Id), string>> ResolveEntityNamesAsync(
+        IReadOnlyList<AuditLog> items, CancellationToken ct)
+    {
+        var byType = items
+            .Where(i => i.EntityType != null && i.EntityId != null)
+            .GroupBy(i => i.EntityType!)
+            .ToDictionary(g => g.Key, g => g.Select(i => i.EntityId!).ToHashSet());
+
+        var names = new Dictionary<(string, string), string>();
+
+        async Task Add<T>(string type, IRepository<T> repo, Func<T, string?> name) where T : BaseEntity
+        {
+            if (!byType.TryGetValue(type, out var idStrings)) return;
+            var ids = idStrings
+                .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+                .Where(g => g.HasValue).Select(g => g!.Value).Distinct().ToList();
+            if (ids.Count == 0) return;
+            foreach (var row in await repo.ListAsync(e => ids.Contains(e.Id), ct))
+            {
+                var label = name(row);
+                if (!string.IsNullOrWhiteSpace(label)) names[(type, row.Id.ToString())] = label!;
+            }
+        }
+
+        await Add<Asset>(nameof(Asset), _uow.Assets, a => a.Hostname);
+        await Add<ConnectorConfig>(nameof(ConnectorConfig), _uow.Connectors, c => c.Name);
+        await Add<CompliancePolicy>(nameof(CompliancePolicy), _uow.CompliancePolicies, p => p.Name);
+        await Add<Incident>(nameof(Incident), _uow.Incidents, i => i.Title);
+        await Add<User>(nameof(User), _uow.Users, u => u.UserName);
+        await Add<Role>(nameof(Role), _uow.Roles, r => r.Name);
+        await Add<MatchingRule>(nameof(MatchingRule), _uow.MatchingRules, r => r.Name);
+        await Add<Report>(nameof(Report), _uow.Reports, r => r.Name);
+        await Add<MatchRecord>(nameof(MatchRecord), _uow.MatchRecords, m => m.CandidateHostname);
+
+        return names;
     }
 }
 

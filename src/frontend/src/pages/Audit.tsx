@@ -41,9 +41,18 @@ interface AuditItem {
   action: string;
   entityType?: string;
   entityId?: string;
+  entityName?: string;
   details?: string;
   ipAddress?: string;
   timestamp: string;
+}
+
+// Prefer the resolved name (asset hostname, connector/policy name, username, incident title…);
+// fall back to a shortened GUID, but keep readable ids (e.g. setting keys) whole.
+function entityLabel(l: AuditItem): string {
+  if (l.entityName) return l.entityName;
+  if (!l.entityId) return '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(l.entityId) ? l.entityId.substring(0, 8) : l.entityId;
 }
 
 function ActionBadge({ action }: { action: string }) {
@@ -157,8 +166,9 @@ export default function Audit() {
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>{formatDate(l.timestamp)}</td>
                     <td>{l.userName}</td>
                     <td><ActionBadge action={l.action} /></td>
-                    <td className="muted">
-                      {l.entityType}{l.entityId ? ` · ${l.entityId.substring(0, 12)}` : ''}
+                    <td>
+                      <span className="muted">{l.entityType}</span>
+                      {entityLabel(l) && <> · <span>{entityLabel(l)}</span></>}
                     </td>
                     <td className="muted">{l.ipAddress ?? '—'}</td>
                   </tr>
