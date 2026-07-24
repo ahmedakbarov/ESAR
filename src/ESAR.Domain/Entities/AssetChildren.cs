@@ -19,6 +19,20 @@ public class AssetSource : BaseEntity
     public bool IsAuthoritative { get; set; }
 }
 
+/// <summary>A namespaced, normalized identity observation retained across connector runs.</summary>
+public class AssetIdentifier : BaseEntity
+{
+    public Guid AssetId { get; set; }
+    public Asset? Asset { get; set; }
+    public string Namespace { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+    public string NormalizedValue { get; set; } = string.Empty;
+    public ConnectorType Source { get; set; }
+    public DateTime FirstSeen { get; set; } = DateTime.UtcNow;
+    public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+    public bool IsActive { get; set; } = true;
+}
+
 public class AssetIp : BaseEntity
 {
     public Guid AssetId { get; set; }
@@ -29,6 +43,9 @@ public class AssetIp : BaseEntity
     public bool IsPrimary { get; set; }
     public ConnectorType Source { get; set; }
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+    public DateTime FirstSeen { get; set; } = DateTime.UtcNow;
+    public DateTime? ValidTo { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class AssetTag : BaseEntity

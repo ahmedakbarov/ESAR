@@ -43,7 +43,7 @@ public class DataQualityEngine : IDataQualityEngine
             Add("MISSING_ASSET_TYPE", "Asset type could not be determined", 8);
         if (!ValidHostname.IsMatch(asset.NormalizedHostname))
             Add("INVALID_HOSTNAME", $"Hostname '{asset.Hostname}' violates naming rules", 10);
-        if (asset.IpAddresses.Count == 0)
+        if (!asset.IpAddresses.Any(ip => ip.IsActive))
             Add("NO_IP_ADDRESS", "No IP address is known for this asset", 8);
         if (asset.LastSeen < DateTime.UtcNow.AddDays(-30))
             Add("STALE_TELEMETRY", $"No source has seen this asset since {asset.LastSeen:yyyy-MM-dd}", 12);

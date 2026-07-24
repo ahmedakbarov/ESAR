@@ -83,7 +83,7 @@ public class CrowdStrikeConnector : RestConnectorBase
                         Model = GetString(device, "system_product_name"),
                         RawJson = device.GetRawText()
                     };
-                    asset.Identifiers[MatchAttributes.EndpointId] = asset.ExternalId;
+                    asset.Identifiers[MatchAttributes.CrowdStrikeDeviceId] = asset.ExternalId;
                     var ip = GetString(device, "local_ip");
                     var mac = GetString(device, "mac_address");
                     if (ip is not null || mac is not null)
@@ -182,10 +182,10 @@ public class SentinelOneConnector : RestConnectorBase
                         OsVersion = GetString(agent, "osRevision"),
                         SerialNumber = GetString(agent, "serialNumber"),
                         BiosUuid = GetString(agent, "uuid"),
-                        Manufacturer = GetString(agent, "modelName"),
+                        Model = GetString(agent, "modelName"),
                         RawJson = agent.GetRawText()
                     };
-                    asset.Identifiers[MatchAttributes.EndpointId] = asset.ExternalId;
+                    asset.Identifiers[MatchAttributes.SentinelOneAgentId] = asset.ExternalId;
                     if (GetString(agent, "externalIp") is { } ip)
                         asset.Interfaces.Add(new DiscoveredInterface { IpAddress = ip });
                     asset.Tags["antivirus"] = "true";
@@ -256,7 +256,7 @@ public class CortexXdrConnector : RestConnectorBase
                     RawJson = ep.GetRawText()
                 };
                 if (string.IsNullOrEmpty(asset.ExternalId)) continue;
-                asset.Identifiers[MatchAttributes.EndpointId] = asset.ExternalId;
+                asset.Identifiers[MatchAttributes.CortexEndpointId] = asset.ExternalId;
                 asset.Tags["antivirus"] = "true";
 
                 var ips = ReadStringArray(ep, "ip");

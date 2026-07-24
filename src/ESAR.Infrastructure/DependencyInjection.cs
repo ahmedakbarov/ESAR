@@ -114,6 +114,7 @@ public static class DependencyInjection
             .GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
             .CreateLogger("DbInit");
         await db.Database.EnsureCreatedAsync(ct);
+        await DatabaseSchemaUpgrader.ApplyAsync(db, logger, ct);
         await DbSeeder.SeedAsync(db, hasher, logger, ct);
     }
 }

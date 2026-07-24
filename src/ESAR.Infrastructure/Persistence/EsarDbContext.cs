@@ -9,6 +9,7 @@ public class EsarDbContext : DbContext
 
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<AssetSource> AssetSources => Set<AssetSource>();
+    public DbSet<AssetIdentifier> AssetIdentifiers => Set<AssetIdentifier>();
     public DbSet<AssetIp> AssetIps => Set<AssetIp>();
     public DbSet<AssetTag> AssetTags => Set<AssetTag>();
     public DbSet<AssetHistory> AssetHistories => Set<AssetHistory>();
@@ -58,6 +59,7 @@ public class EsarDbContext : DbContext
             e.Property(x => x.DataQualityIssuesJson).HasColumnType("jsonb");
             e.HasQueryFilter(x => !x.IsDeleted);
             e.HasMany(x => x.Sources).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Identifiers).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.IpAddresses).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Tags).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Histories).WithOne(x => x.Asset!).HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
@@ -73,6 +75,16 @@ public class EsarDbContext : DbContext
             e.HasIndex(x => new { x.ConnectorType, x.ExternalId }).IsUnique();
             e.Property(x => x.ExternalId).HasMaxLength(512).IsRequired();
             e.Property(x => x.RawData).HasColumnType("jsonb");
+        });
+
+        b.Entity<AssetIdentifier>(e =>
+        {
+            e.ToTable("asset_identifiers");
+            e.HasIndex(x => new { x.Namespace, x.NormalizedValue });
+            e.HasIndex(x => new { x.AssetId, x.Namespace, x.NormalizedValue, x.Source }).IsUnique();
+            e.Property(x => x.Namespace).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Value).HasMaxLength(512).IsRequired();
+            e.Property(x => x.NormalizedValue).HasMaxLength(512).IsRequired();
         });
 
         b.Entity<AssetIp>(e =>

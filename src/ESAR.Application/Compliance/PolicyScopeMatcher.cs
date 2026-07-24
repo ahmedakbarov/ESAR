@@ -58,7 +58,7 @@ public static class PolicyScopeMatcher
         if (!MatchesAny(scope.Connectors, asset.Sources.Select(s => s.ConnectorType.ToString()))) return false;
         if (!MatchesTags(scope.Tags, asset.Tags)) return false;
         if (!MatchesHostnames(scope.HostnamePatterns, asset.NormalizedHostname)) return false;
-        if (!MatchesIpRanges(scope.IpRanges, asset.IpAddresses)) return false;
+        if (!MatchesIpRanges(scope.IpRanges, asset.IpAddresses.Where(ip => ip.IsActive).ToList())) return false;
         if (!MatchesSet(scope.Subscriptions, asset.CloudSubscriptionId)) return false;
         return true;
     }

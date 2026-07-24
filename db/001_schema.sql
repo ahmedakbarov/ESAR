@@ -72,6 +72,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_sources_connector_external
     ON asset_sources ("ConnectorType", "ExternalId");
 CREATE INDEX IF NOT EXISTS ix_asset_sources_asset ON asset_sources ("AssetId");
 
+CREATE TABLE IF NOT EXISTS asset_identifiers (
+    "Id"              uuid PRIMARY KEY,
+    "AssetId"         uuid NOT NULL REFERENCES assets ("Id") ON DELETE CASCADE,
+    "Namespace"       varchar(128) NOT NULL,
+    "Value"           varchar(512) NOT NULL,
+    "NormalizedValue" varchar(512) NOT NULL,
+    "Source"           text NOT NULL,
+    "FirstSeen"       timestamptz NOT NULL,
+    "LastSeen"        timestamptz NOT NULL,
+    "IsActive"        boolean NOT NULL DEFAULT true,
+    "CreatedAt"       timestamptz NOT NULL,
+    "UpdatedAt"       timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_asset_identifiers_lookup
+    ON asset_identifiers ("Namespace", "NormalizedValue");
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_identifiers_observation
+    ON asset_identifiers ("AssetId", "Namespace", "NormalizedValue", "Source");
+
 CREATE TABLE IF NOT EXISTS asset_ips (
     "Id"         uuid PRIMARY KEY,
     "AssetId"    uuid NOT NULL REFERENCES assets ("Id") ON DELETE CASCADE,
@@ -81,6 +99,9 @@ CREATE TABLE IF NOT EXISTS asset_ips (
     "IsPrimary"  boolean NOT NULL DEFAULT false,
     "Source"     text NOT NULL,
     "LastSeen"   timestamptz NOT NULL,
+    "FirstSeen"  timestamptz NOT NULL,
+    "ValidTo"    timestamptz,
+    "IsActive"   boolean NOT NULL DEFAULT true,
     "CreatedAt"  timestamptz NOT NULL,
     "UpdatedAt"  timestamptz NOT NULL
 );

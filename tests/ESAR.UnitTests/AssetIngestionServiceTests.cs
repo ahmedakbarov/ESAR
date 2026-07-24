@@ -20,6 +20,7 @@ public class AssetIngestionServiceTests
     private readonly Mock<IUnitOfWork> _uow = new();
     private readonly Mock<IAssetRepository> _assets = new();
     private readonly Mock<IRepository<AssetSource>> _sources = new();
+    private readonly Mock<IRepository<AssetIdentifier>> _identifiers = new();
     private readonly Mock<IRepository<MatchRecord>> _matchRecords = new();
     private readonly Mock<INormalizationService> _normalization = new();
     private readonly Mock<IMatchingEngine> _matching = new();
@@ -33,6 +34,7 @@ public class AssetIngestionServiceTests
     {
         _uow.SetupGet(unit => unit.Assets).Returns(_assets.Object);
         _uow.SetupGet(unit => unit.AssetSources).Returns(_sources.Object);
+        _uow.SetupGet(unit => unit.AssetIdentifiers).Returns(_identifiers.Object);
         _uow.SetupGet(unit => unit.MatchRecords).Returns(_matchRecords.Object);
         _uow.Setup(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _normalization.Setup(service => service.Normalize(It.IsAny<DiscoveredAsset>()))
@@ -41,8 +43,15 @@ public class AssetIngestionServiceTests
             .ReturnsAsync(Array.Empty<string>());
         _sources.Setup(repository => repository.AddAsync(It.IsAny<AssetSource>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _identifiers.Setup(repository => repository.AddAsync(
+                It.IsAny<AssetIdentifier>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         _matchRecords.Setup(repository => repository.AddAsync(It.IsAny<MatchRecord>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        _matchRecords.Setup(repository => repository.ListAsync(
+                It.IsAny<System.Linq.Expressions.Expression<Func<MatchRecord, bool>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MatchRecord>());
         _events.Setup(bus => bus.PublishAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _audit.Setup(audit => audit.LogAsync(It.IsAny<AuditAction>(), It.IsAny<string>(), It.IsAny<string>(),
@@ -117,6 +126,38 @@ public class AssetIngestionServiceTests
         _matching.Verify(engine => engine.MatchAsync(It.IsAny<DiscoveredAsset>(), It.IsAny<CancellationToken>()), Times.Never);
         _audit.Verify(audit => audit.LogAsync(AuditAction.AssetReactivated, nameof(Asset), deletedAsset.Id.ToString(),
             It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Auto_merge_persists_namespaced_hard_identifier()
+    {
+        var existing = new Asset { Hostname = "vm01", NormalizedHostname = "vm01" };
+        var incoming = new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-vm-identifier",
+            Hostname = "vm01",
+            Identifiers = { [MatchAttributes.AzureVmId] = "vm-guid-1" }
+        };
+        _assets.Setup(repository => repository.FindBySourceAsync(
+                incoming.Source, incoming.ExternalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _assets.Setup(repository => repository.FindDeletedBySourceAsync(
+                incoming.Source, incoming.ExternalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Asset?)null);
+        _matching.Setup(engine => engine.MatchAsync(incoming, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MatchResult { Decision = MatchDecision.AutoMerged, MatchedAsset = existing });
+
+        var outcome = await _sut.IngestAsync(incoming);
+
+        outcome.Should().Be(IngestionOutcome.Updated);
+        _identifiers.Verify(repository => repository.AddAsync(
+            It.Is<AssetIdentifier>(identifier =>
+                identifier.AssetId == existing.Id &&
+                identifier.Namespace == MatchAttributes.AzureVmId &&
+                identifier.NormalizedValue == "vm-guid-1" &&
+                identifier.Source == ConnectorType.Azure),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

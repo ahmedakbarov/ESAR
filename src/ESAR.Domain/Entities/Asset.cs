@@ -66,6 +66,7 @@ public class Asset : AuditableEntity
     public string AttributeSourcesJson { get; set; } = "{}";
 
     public ICollection<AssetSource> Sources { get; set; } = new List<AssetSource>();
+    public ICollection<AssetIdentifier> Identifiers { get; set; } = new List<AssetIdentifier>();
     public ICollection<AssetIp> IpAddresses { get; set; } = new List<AssetIp>();
     public ICollection<AssetTag> Tags { get; set; } = new List<AssetTag>();
     public ICollection<AssetHistory> Histories { get; set; } = new List<AssetHistory>();

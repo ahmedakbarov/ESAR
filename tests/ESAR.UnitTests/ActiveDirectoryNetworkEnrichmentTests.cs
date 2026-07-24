@@ -74,7 +74,7 @@ public class ActiveDirectoryNetworkEnrichmentTests
 
         added.Should().Be(2);
         asset.Interfaces.Should().HaveCount(2);
-        asset.Interfaces.Should().OnlyContain(networkInterface => networkInterface.IpAddress is null);
+        asset.Interfaces.Should().OnlyContain(networkInterface => networkInterface.IpAddress == null);
         asset.Interfaces.Select(networkInterface => networkInterface.MacAddress)
             .Should().BeEquivalentTo("00:11:22:33:44:55", "00:aa:bb:cc:dd:ee");
     }
@@ -98,9 +98,9 @@ public class ActiveDirectoryNetworkEnrichmentTests
         added.Should().Be(1);
         asset.Interfaces.Should().HaveCount(2);
         asset.Interfaces.Should().ContainSingle(networkInterface =>
-            networkInterface.MacAddress == "00:11:22:33:44:55" && networkInterface.IpAddress is null);
+            networkInterface.MacAddress == "00:11:22:33:44:55" && networkInterface.IpAddress == null);
         asset.Interfaces.Should().ContainSingle(networkInterface =>
-            networkInterface.IpAddress == "10.10.20.30" && networkInterface.MacAddress is null);
+            networkInterface.IpAddress == "10.10.20.30" && networkInterface.MacAddress == null);
     }
 
     private static ConnectorSettings Settings(params (string Key, string Value)[] overrides)

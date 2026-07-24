@@ -69,6 +69,13 @@ public class MergeEngineTests
     private readonly Mock<IRepository<AssetHistory>> _history = new();
     private readonly Mock<IRepository<AssetIp>> _ips = new();
     private readonly Mock<IRepository<AssetTag>> _tags = new();
+    private readonly Mock<IRepository<MatchRecord>> _matchRecords = new();
+    private readonly Mock<IRepository<ApprovalRequest>> _approvals = new();
+    private readonly Mock<IRepository<Incident>> _incidents = new();
+    private readonly Mock<IRepository<AssetRelationship>> _relationships = new();
+    private readonly Mock<IRepository<AssetCompliance>> _compliance = new();
+    private readonly Mock<IRepository<AssetEvent>> _events = new();
+    private readonly Mock<IRepository<AssetRisk>> _risks = new();
     private readonly Mock<ISourcePriorityEngine> _priority = new();
     private readonly MergeEngine _sut;
 
@@ -77,11 +84,37 @@ public class MergeEngineTests
         _uow.SetupGet(u => u.AssetHistories).Returns(_history.Object);
         _uow.SetupGet(u => u.AssetIps).Returns(_ips.Object);
         _uow.SetupGet(u => u.AssetTags).Returns(_tags.Object);
+        _uow.SetupGet(u => u.MatchRecords).Returns(_matchRecords.Object);
+        _uow.SetupGet(u => u.Approvals).Returns(_approvals.Object);
+        _uow.SetupGet(u => u.Incidents).Returns(_incidents.Object);
+        _uow.SetupGet(u => u.Relationships).Returns(_relationships.Object);
+        _uow.SetupGet(u => u.AssetCompliance).Returns(_compliance.Object);
+        _uow.SetupGet(u => u.AssetEvents).Returns(_events.Object);
+        _uow.SetupGet(u => u.AssetRisks).Returns(_risks.Object);
+        _matchRecords.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<MatchRecord, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MatchRecord>());
+        _approvals.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<ApprovalRequest, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ApprovalRequest>());
+        _incidents.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<Incident, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Incident>());
+        _relationships.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<AssetRelationship, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AssetRelationship>());
+        _compliance.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<AssetCompliance, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AssetCompliance>());
+        _events.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<AssetEvent, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AssetEvent>());
         _ips.Setup(repository => repository.AddAsync(It.IsAny<AssetIp>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _tags.Setup(repository => repository.AddAsync(It.IsAny<AssetTag>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _sut = new MergeEngine(_uow.Object, _priority.Object, NullLogger<MergeEngine>.Instance);
+        _sut = new MergeEngine(_uow.Object, _priority.Object, new Esar.Application.Normalization.NormalizationService(),
+            NullLogger<MergeEngine>.Instance);
     }
 
     [Fact]
@@ -186,10 +219,12 @@ public class MergeEngineTests
 
         await _sut.ApplyAsync(asset, incoming);
 
-        asset.IpAddresses.Should().ContainSingle();
-        asset.IpAddresses.Single().MacAddress.Should().Be("00:aa:bb:cc:dd:ee");
-        asset.IpAddresses.Single().IsPrimary.Should().BeTrue();
-        asset.IpAddresses.Single().LastSeen.Should().Be(incoming.SeenAt);
+        asset.IpAddresses.Should().ContainSingle(item => item.IsActive);
+        var active = asset.IpAddresses.Single(item => item.IsActive);
+        active.MacAddress.Should().Be("00:aa:bb:cc:dd:ee");
+        active.IsPrimary.Should().BeTrue();
+        active.LastSeen.Should().Be(incoming.SeenAt);
+        asset.IpAddresses.Should().ContainSingle(item => !item.IsActive && item.ValidTo == incoming.SeenAt);
     }
 
     [Fact]
@@ -314,5 +349,30 @@ public class MergeEngineTests
             software.Name == "Defender Agent" && software.AssetId == survivor.Id);
         survivor.AttributeSourcesJson.Should().Contain("MicrosoftDefender");
         duplicate.IsDeleted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Apply_updates_normalized_hostname_when_authoritative_hostname_changes()
+    {
+        var asset = new Asset
+        {
+            Hostname = "old-name",
+            NormalizedHostname = "old-name",
+            AttributeSourcesJson = """{"Hostname":"ActiveDirectory"}"""
+        };
+        _priority.Setup(engine => engine.WinsAsync(
+                ConnectorType.Azure, ConnectorType.ActiveDirectory, nameof(Asset.Hostname),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _sut.ApplyAsync(asset, new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-rename",
+            Hostname = "NEW-NAME.ESAR.LOCAL"
+        });
+
+        asset.Hostname.Should().Be("NEW-NAME.ESAR.LOCAL");
+        asset.NormalizedHostname.Should().Be("new-name.esar.local");
     }
 }

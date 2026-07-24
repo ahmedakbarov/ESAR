@@ -48,7 +48,30 @@ public class NormalizationService : INormalizationService
         var ip = asset.Interfaces.FirstOrDefault(i => i.IpAddress != null)?.IpAddress;
         SetIfMissing(asset, MatchAttributes.IpAddress, ip);
 
+        foreach (var key in asset.Identifiers.Keys.ToList())
+        {
+            var normalized = NormalizeIdentifier(key, asset.Identifiers[key]);
+            if (string.IsNullOrEmpty(normalized)) asset.Identifiers.Remove(key);
+            else asset.Identifiers[key] = normalized;
+        }
+
         return asset;
+    }
+
+    public static string? NormalizeIdentifier(string identifierNamespace, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        return identifierNamespace switch
+        {
+            MatchAttributes.SerialNumber => NormalizeSerial(trimmed),
+            MatchAttributes.AzureResourceId or MatchAttributes.AzureVmId or MatchAttributes.VmwareUuid or
+                MatchAttributes.BiosUuid or MatchAttributes.AdComputerObjectGuid or MatchAttributes.EntraDeviceId or
+                MatchAttributes.DefenderMachineId or MatchAttributes.CrowdStrikeDeviceId or
+                MatchAttributes.SentinelOneAgentId or MatchAttributes.CortexEndpointId =>
+                trimmed.ToLowerInvariant(),
+            _ => trimmed
+        };
     }
 
     public string NormalizeHostname(string? hostname)
@@ -72,7 +95,18 @@ public class NormalizationService : INormalizationService
     public string? NormalizeIp(string? ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return null;
-        return System.Net.IPAddress.TryParse(ip.Trim(), out var parsed) ? parsed.ToString() : null;
+        if (!System.Net.IPAddress.TryParse(ip.Trim(), out var parsed)) return null;
+        if (System.Net.IPAddress.IsLoopback(parsed) || parsed.Equals(System.Net.IPAddress.Any) ||
+            parsed.Equals(System.Net.IPAddress.IPv6Any) || parsed.IsIPv6Multicast ||
+            parsed.IsIPv6LinkLocal)
+            return null;
+        if (parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = parsed.GetAddressBytes();
+            if (bytes[0] == 169 && bytes[1] == 254) return null;
+            if (bytes[0] >= 224) return null;
+        }
+        return parsed.ToString();
     }
 
     public string? NormalizeOs(string? os)
