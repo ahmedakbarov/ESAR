@@ -5,6 +5,7 @@ using Esar.Application.Contracts;
 using Esar.Application.Ingestion;
 using Esar.Application.Matching;
 using Esar.Application.Merging;
+using Esar.Application.Scoring;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
 using MatchType = Esar.Domain.Enums.MatchType;
@@ -58,7 +59,8 @@ public class AssetIngestionServiceTests
             It.IsAny<object>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         _sut = new AssetIngestionService(_uow.Object, _normalization.Object, _matching.Object, _merge.Object,
-            _approvals.Object, _events.Object, _audit.Object, NullLogger<AssetIngestionService>.Instance);
+            _approvals.Object, _events.Object, _audit.Object, new DataQualityEngine(),
+            NullLogger<AssetIngestionService>.Instance);
     }
 
     [Fact]

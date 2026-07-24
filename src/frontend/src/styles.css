@@ -98,6 +98,34 @@ input:focus, select:focus { border-color: var(--accent); }
 .filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .pagination { display: flex; gap: 8px; align-items: center; margin-top: 14px; color: var(--muted); }
 
+/* Sortable columns + Excel-style column filter dropdowns */
+table.data th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+table.data th.sortable:hover { color: var(--text); }
+.col-filter { position: relative; display: inline-block; margin-left: 4px; }
+.col-filter > button.funnel {
+  all: unset; cursor: pointer; padding: 0 3px; color: var(--muted); font-size: 11px;
+}
+.col-filter > button.funnel.active { color: var(--accent); }
+.col-filter .dropdown {
+  position: absolute; top: 18px; left: -8px; z-index: 120; min-width: 230px; max-height: 340px;
+  display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  text-transform: none; letter-spacing: normal; font-weight: 400;
+}
+.col-filter .dropdown input[type=text] { width: 100%; margin-bottom: 8px; }
+.col-filter .dropdown .options { overflow-y: auto; flex: 1; }
+.col-filter .dropdown label.opt {
+  display: flex; gap: 7px; align-items: center; padding: 3px 2px;
+  font-size: 12.5px; color: var(--text); cursor: pointer;
+}
+.col-filter .dropdown label.opt .count { margin-left: auto; color: var(--muted); font-size: 11px; }
+.col-filter .dropdown .actions {
+  display: flex; gap: 8px; justify-content: space-between; margin-top: 8px;
+  border-top: 1px solid var(--border); padding-top: 8px;
+}
+.col-filter-overlay { position: fixed; inset: 0; z-index: 110; }
+
 /* Row action (kebab) menu */
 .row-menu { position: relative; display: inline-block; }
 .row-menu > button.kebab {

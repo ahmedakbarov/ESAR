@@ -43,6 +43,9 @@ public interface IAssetRepository : IRepository<Asset>
         IReadOnlyCollection<string> ips, DateTime networkEvidenceCutoff, CancellationToken ct = default);
     Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname, IReadOnlyCollection<string> macs,
         IReadOnlyCollection<string> ips, CancellationToken ct = default);
+    /// <summary>Distinct values (with counts) of one filterable asset column — feeds the
+    /// Excel-style column filter dropdowns. Unknown fields return an empty list.</summary>
+    Task<List<FilterValue>> ListFilterValuesAsync(string field, CancellationToken ct = default);
 }
 
 public interface IUnitOfWork

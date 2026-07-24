@@ -22,6 +22,13 @@ public class AssetsController : ControllerBase
         CancellationToken ct)
         => Ok(await _mediator.Send(new SearchAssetsQuery(criteria), ct));
 
+    /// <summary>Distinct values of one filterable column — feeds the Excel-style column filters.</summary>
+    [HttpGet("filter-values")]
+    [Authorize("assets.read")]
+    public async Task<IActionResult> FilterValues([FromQuery] string field,
+        [FromServices] Esar.Application.Abstractions.IUnitOfWork uow, CancellationToken ct)
+        => Ok(await uow.Assets.ListFilterValuesAsync(field, ct));
+
     /// <summary>Returns the full golden record for one asset.</summary>
     [HttpGet("{id:guid}")]
     [Authorize("assets.read")]

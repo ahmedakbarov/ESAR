@@ -33,8 +33,25 @@ public class AssetSearchCriteria
     public decimal? MaxDataQualityScore { get; set; }
     public bool? PolicyExempt { get; set; }
     public bool IncludeDeleted { get; set; }
+
+    // Excel-style multi-select column filters (repeat the query key: assetTypes=A&assetTypes=B).
+    // Values within one list are ORed; different filters are ANDed. The single-value fields above
+    // are kept for backward compatibility.
+    public List<string>? AssetTypes { get; set; }
+    public List<string>? Statuses { get; set; }
+    public List<string>? LifecycleStatuses { get; set; }
+    public List<string>? Environments { get; set; }
+    public List<string>? Criticalities { get; set; }
+    public List<string>? ComplianceStatuses { get; set; }
+    public List<string>? Sources { get; set; }
+    public List<string>? OsNames { get; set; }
+    public List<string>? BusinessUnits { get; set; }
+
     public string SortBy { get; set; } = "hostname";
     public bool SortDescending { get; set; }
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
 }
+
+/// <summary>One distinct value of a filterable asset column, with how many assets carry it.</summary>
+public record FilterValue(string Value, int Count);

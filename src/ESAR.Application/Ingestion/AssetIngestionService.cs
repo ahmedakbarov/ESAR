@@ -5,6 +5,7 @@ using Esar.Application.Auditing;
 using Esar.Application.Contracts;
 using Esar.Application.Matching;
 using Esar.Application.Merging;
+using Esar.Application.Scoring;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
 using MatchType = Esar.Domain.Enums.MatchType;
@@ -29,11 +30,12 @@ public class AssetIngestionService : IAssetIngestionService
     private readonly IApprovalService _approvals;
     private readonly IEventBus _events;
     private readonly IAuditService _audit;
+    private readonly IDataQualityEngine _dataQuality;
     private readonly ILogger<AssetIngestionService> _logger;
 
     public AssetIngestionService(IUnitOfWork uow, INormalizationService normalization, IMatchingEngine matching,
         IMergeEngine merge, IApprovalService approvals, IEventBus events, IAuditService audit,
-        ILogger<AssetIngestionService> logger)
+        IDataQualityEngine dataQuality, ILogger<AssetIngestionService> logger)
     {
         _uow = uow;
         _normalization = normalization;
@@ -42,6 +44,7 @@ public class AssetIngestionService : IAssetIngestionService
         _approvals = approvals;
         _events = events;
         _audit = audit;
+        _dataQuality = dataQuality;
         _logger = logger;
     }
 
@@ -177,6 +180,9 @@ public class AssetIngestionService : IAssetIngestionService
         await _merge.ApplyAsync(asset, incoming, ct);
         await UpsertIdentifiersAsync(asset, incoming, ct);
         await UpsertSourceLinkAsync(asset, incoming, ct);
+        // Keep the data-quality score current with what was just merged instead of leaving it
+        // stale until the next fleet-wide scoring pass.
+        _dataQuality.Evaluate(asset);
         _uow.Assets.Update(asset);
     }
 
@@ -195,6 +201,9 @@ public class AssetIngestionService : IAssetIngestionService
         await _merge.ApplyAsync(asset, d, ct);
         await UpsertIdentifiersAsync(asset, d, ct);
         await UpsertSourceLinkAsync(asset, d, ct);
+        // Score the asset from what discovery actually provided — without this every new asset
+        // reports a perfect default score until the next scheduled scoring pass.
+        _dataQuality.Evaluate(asset);
         await _uow.Assets.AddAsync(asset, ct);
         return asset;
     }
