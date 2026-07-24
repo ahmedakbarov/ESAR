@@ -59,13 +59,11 @@ public class GenericRepository<T> : IRepository<T> where T : class
 
 public class AssetRepository : GenericRepository<Asset>, IAssetRepository
 {
-    private static readonly ConnectorType[] EdrConnectors =
-        { ConnectorType.MicrosoftDefender, ConnectorType.CortexXdr, ConnectorType.CrowdStrike, ConnectorType.SentinelOne };
-
     public AssetRepository(EsarDbContext db) : base(db) { }
 
     private IQueryable<Asset> Detailed => Db.Assets
         .Include(a => a.Sources)
+        .Include(a => a.Identifiers)
         .Include(a => a.IpAddresses)
         .Include(a => a.Tags)
         .Include(a => a.ComplianceRecords)
@@ -106,7 +104,7 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
                     EF.Functions.ILike(a.Hostname, term) ||
                     EF.Functions.ILike(a.Fqdn ?? "", term) ||
                     EF.Functions.ILike(a.OwnerName ?? "", term) ||
-                    a.IpAddresses.Any(ip => EF.Functions.ILike(ip.IpAddress, term)) ||
+                    a.IpAddresses.Any(ip => ip.IsActive && EF.Functions.ILike(ip.IpAddress, term)) ||
                     EF.Functions.ILike(a.SerialNumber ?? "", term));
             }
         }
@@ -123,11 +121,11 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
         if (TryEnum<ConnectorType>(c.Source, out var source))
             query = query.Where(a => a.Sources.Any(s => s.ConnectorType == source));
         if (!string.IsNullOrWhiteSpace(c.Ip))
-            query = query.Where(a => a.IpAddresses.Any(i => i.IpAddress == c.Ip.Trim()));
+            query = query.Where(a => a.IpAddresses.Any(i => i.IsActive && i.IpAddress == c.Ip.Trim()));
         if (!string.IsNullOrWhiteSpace(c.Mac))
         {
             var mac = c.Mac.Trim().ToLowerInvariant();
-            query = query.Where(a => a.IpAddresses.Any(i => i.MacAddress == mac));
+            query = query.Where(a => a.IpAddresses.Any(i => i.IsActive && i.MacAddress == mac));
         }
         if (!string.IsNullOrWhiteSpace(c.Os))
             query = query.Where(a => EF.Functions.ILike(a.OperatingSystem ?? "", $"%{c.Os.Trim()}%"));
@@ -174,36 +172,44 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
         CancellationToken ct = default)
     {
         var q = Detailed.Where(a => a.MergedIntoAssetId == null);
+        var persisted = q.Where(a => a.Identifiers.Any(identifier =>
+            identifier.IsActive && identifier.Namespace == attribute && identifier.NormalizedValue == value));
         return attribute switch
         {
             MatchAttributes.AzureResourceId => q.Where(a =>
                 a.CloudResourceId == value ||
+                a.Identifiers.Any(i => i.IsActive && i.Namespace == attribute && i.NormalizedValue == value) ||
                 a.Sources.Any(s => s.ConnectorType == ConnectorType.Azure && s.ExternalId == value))
                 .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
             MatchAttributes.AwsInstanceId => q.Where(a =>
                 a.CloudResourceId == value ||
+                a.Identifiers.Any(i => i.IsActive && i.Namespace == attribute && i.NormalizedValue == value) ||
                 a.Sources.Any(s => s.ConnectorType == ConnectorType.Aws && s.ExternalId == value))
                 .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
             MatchAttributes.VmwareUuid => q.Where(a =>
                 a.BiosUuid == value ||
+                a.Identifiers.Any(i => i.IsActive && i.Namespace == attribute && i.NormalizedValue == value) ||
                 a.Sources.Any(s => s.ConnectorType == ConnectorType.VmwareVCenter && s.ExternalId == value))
                 .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
-            MatchAttributes.BiosUuid => q.Where(a => a.BiosUuid == value)
+            MatchAttributes.BiosUuid => q.Where(a => a.BiosUuid == value ||
+                    a.Identifiers.Any(i => i.IsActive && i.Namespace == attribute && i.NormalizedValue == value))
                 .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
-            MatchAttributes.SerialNumber => q.Where(a => a.SerialNumber == value)
+            MatchAttributes.SerialNumber => q.Where(a => a.SerialNumber == value ||
+                    a.Identifiers.Any(i => i.IsActive && i.Namespace == attribute && i.NormalizedValue == value))
                 .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
-            MatchAttributes.ObjectGuid => q.Where(a => a.Sources.Any(s =>
-                (s.ConnectorType == ConnectorType.ActiveDirectory || s.ConnectorType == ConnectorType.EntraId) &&
-                s.ExternalId == value)).OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
-            MatchAttributes.EndpointId => q.Where(a => a.Sources.Any(s =>
-                    EdrConnectors.Contains(s.ConnectorType) && s.ExternalId == value))
-                .OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
-            _ => Task.FromResult(new List<Asset>())
+            MatchAttributes.ObjectGuid => persisted.OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.EndpointId => persisted.OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            MatchAttributes.AdComputerObjectGuid or MatchAttributes.EntraDeviceId or MatchAttributes.AzureVmId or
+                MatchAttributes.DefenderMachineId or MatchAttributes.CrowdStrikeDeviceId or
+                MatchAttributes.SentinelOneAgentId or MatchAttributes.CortexEndpointId =>
+                persisted.OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct),
+            _ => persisted.OrderBy(a => a.Id).Take(2).AsSplitQuery().ToListAsync(ct)
         };
     }
 
     public async Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname,
-        IReadOnlyCollection<string> macs, IReadOnlyCollection<string> ips, CancellationToken ct = default)
+        IReadOnlyCollection<string> macs, IReadOnlyCollection<string> ips, DateTime networkEvidenceCutoff,
+        CancellationToken ct = default)
     {
         var macList = macs.ToList();
         var ipList = ips.ToList();
@@ -214,12 +220,25 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             .Where(a => a.MergedIntoAssetId == null)
             .Where(a =>
                 (hasHostname && a.NormalizedHostname == normalizedHostname) ||
-                (macList.Count > 0 && a.IpAddresses.Any(i => i.MacAddress != null && macList.Contains(i.MacAddress))) ||
-                (ipList.Count > 0 && a.IpAddresses.Any(i => ipList.Contains(i.IpAddress))))
-            .Take(25)
+                (macList.Count > 0 && a.IpAddresses.Any(i => i.IsActive && i.LastSeen >= networkEvidenceCutoff &&
+                    i.MacAddress != null && macList.Contains(i.MacAddress))) ||
+                (ipList.Count > 0 && a.IpAddresses.Any(i => i.IsActive && i.LastSeen >= networkEvidenceCutoff &&
+                    ipList.Contains(i.IpAddress))))
+            .OrderByDescending(a => hasHostname && a.NormalizedHostname == normalizedHostname)
+            .ThenByDescending(a => macList.Count > 0 && a.IpAddresses.Any(i => i.IsActive &&
+                i.LastSeen >= networkEvidenceCutoff && i.MacAddress != null && macList.Contains(i.MacAddress)))
+            .ThenByDescending(a => ipList.Count > 0 && a.IpAddresses.Any(i => i.IsActive &&
+                i.LastSeen >= networkEvidenceCutoff && ipList.Contains(i.IpAddress)))
+            .ThenByDescending(a => a.LastSeen)
+            .ThenBy(a => a.Id)
+            .Take(250)
             .AsSplitQuery()
             .ToListAsync(ct);
     }
+
+    public Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname,
+        IReadOnlyCollection<string> macs, IReadOnlyCollection<string> ips, CancellationToken ct = default)
+        => FindSoftCandidatesAsync(normalizedHostname, macs, ips, DateTime.UtcNow.AddDays(-30), ct);
 
     private static IQueryable<Asset> ApplySort(IQueryable<Asset> query, string sortBy, bool desc)
     {
@@ -254,9 +273,12 @@ public class UnitOfWork : IUnitOfWork
         _db = db;
         Assets = new AssetRepository(db);
         AssetSources = new GenericRepository<AssetSource>(db);
+        AssetIdentifiers = new GenericRepository<AssetIdentifier>(db);
         AssetIps = new GenericRepository<AssetIp>(db);
         AssetTags = new GenericRepository<AssetTag>(db);
         AssetHistories = new GenericRepository<AssetHistory>(db);
+        AssetEvents = new GenericRepository<AssetEvent>(db);
+        AssetRisks = new GenericRepository<AssetRisk>(db);
         AssetCompliance = new GenericRepository<AssetCompliance>(db);
         Relationships = new GenericRepository<AssetRelationship>(db);
         CompliancePolicies = new GenericRepository<CompliancePolicy>(db);
@@ -282,9 +304,12 @@ public class UnitOfWork : IUnitOfWork
 
     public IAssetRepository Assets { get; }
     public IRepository<AssetSource> AssetSources { get; }
+    public IRepository<AssetIdentifier> AssetIdentifiers { get; }
     public IRepository<AssetIp> AssetIps { get; }
     public IRepository<AssetTag> AssetTags { get; }
     public IRepository<AssetHistory> AssetHistories { get; }
+    public IRepository<AssetEvent> AssetEvents { get; }
+    public IRepository<AssetRisk> AssetRisks { get; }
     public IRepository<AssetCompliance> AssetCompliance { get; }
     public IRepository<AssetRelationship> Relationships { get; }
     public IRepository<CompliancePolicy> CompliancePolicies { get; }

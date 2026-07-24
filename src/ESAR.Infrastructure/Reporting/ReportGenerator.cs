@@ -73,7 +73,7 @@ public class ReportGenerator : IReportGenerator
                     {
                         a.Hostname, a.Fqdn, a.OperatingSystem, a.AssetType.ToString(), a.Environment.ToString(),
                         a.Criticality.ToString(), a.Status.ToString(), a.OwnerName, a.BusinessUnit,
-                        a.IpAddresses.FirstOrDefault()?.IpAddress, a.ComplianceStatus.ToString(),
+                        a.IpAddresses.FirstOrDefault(ip => ip.IsActive)?.IpAddress, a.ComplianceStatus.ToString(),
                         a.LastSeen.ToString("yyyy-MM-dd HH:mm")
                     }).ToList(), "Asset Inventory");
             }

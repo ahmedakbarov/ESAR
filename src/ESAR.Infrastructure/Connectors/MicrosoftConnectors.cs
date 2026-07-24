@@ -97,7 +97,8 @@ public class EntraIdConnector : AadConnectorBase
                 OsVersion = GetString(device, "operatingSystemVersion"),
                 RawJson = device.GetRawText()
             };
-            asset.Identifiers[MatchAttributes.ObjectGuid] = asset.ExternalId;
+            if (GetString(device, "deviceId") is { } deviceId)
+                asset.Identifiers[MatchAttributes.EntraDeviceId] = deviceId;
             if (GetString(device, "approximateLastSignInDateTime") is { } lastSignIn &&
                 DateTime.TryParse(lastSignIn, out var seen))
                 asset.SeenAt = seen.ToUniversalTime();
@@ -150,7 +151,7 @@ public class IntuneConnector : AadConnectorBase
                 RawJson = device.GetRawText()
             };
             if (GetString(device, "azureADDeviceId") is { } aadId)
-                asset.Identifiers[MatchAttributes.ObjectGuid] = aadId;
+                asset.Identifiers[MatchAttributes.EntraDeviceId] = aadId;
             var mac = GetString(device, "wiFiMacAddress") ?? GetString(device, "ethernetMacAddress");
             if (mac is not null) asset.Interfaces.Add(new DiscoveredInterface { MacAddress = mac });
             if (GetString(device, "complianceState") is { } compliance)
@@ -205,7 +206,7 @@ public class MicrosoftDefenderConnector : AadConnectorBase
                 OsVersion = GetString(machine, "osVersion"),
                 RawJson = machine.GetRawText()
             };
-            asset.Identifiers[MatchAttributes.EndpointId] = asset.ExternalId;
+            asset.Identifiers[MatchAttributes.DefenderMachineId] = asset.ExternalId;
             if (GetString(machine, "lastIpAddress") is { } ip)
                 asset.Interfaces.Add(new DiscoveredInterface { IpAddress = ip, IsPrimary = true });
             if (GetString(machine, "healthStatus") is { } health) asset.Tags["defender_health"] = health;
@@ -303,7 +304,7 @@ public class AzureConnector : AadConnectorBase
                     };
                     asset.Identifiers[MatchAttributes.AzureResourceId] = resourceId;
                     if (GetString(resource, "vmId") is { } vmId)
-                        asset.Identifiers[MatchAttributes.BiosUuid] = vmId;
+                        asset.Identifiers[MatchAttributes.AzureVmId] = vmId;
                     if (GetString(resource, "resourceGroup") is { } resourceGroup)
                         asset.Tags["azure_resource_group"] = resourceGroup;
                     if (resource.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object)
@@ -313,6 +314,7 @@ public class AzureConnector : AadConnectorBase
                                 ? tag.Value.GetString() ?? string.Empty
                                 : tag.Value.GetRawText();
                     }
+                    ApplyAzureBusinessTags(asset);
                     assets[resourceId] = asset;
                 }
             }
@@ -365,6 +367,27 @@ public class AzureConnector : AadConnectorBase
             "Azure NIC enrichment: {MatchedVms} VMs matched, {InterfacesAdded} interfaces added, {PublicIpReferences} public-IP references",
             enrichment.MatchedVms, enrichment.InterfacesAdded, enrichment.PublicIpReferences);
         foreach (var asset in assets.Values) yield return asset;
+    }
+
+    private static void ApplyAzureBusinessTags(DiscoveredAsset asset)
+    {
+        string? Tag(params string[] keys)
+        {
+            foreach (var key in keys)
+                if (asset.Tags.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                    return value;
+            return null;
+        }
+
+        asset.OwnerName = Tag("owner", "ownerName");
+        asset.OwnerEmail = Tag("ownerEmail");
+        asset.BusinessUnit = Tag("businessUnit");
+        asset.Department = Tag("department");
+        asset.Classification = Tag("classification");
+        if (Enum.TryParse<EnvironmentType>(Tag("environment"), true, out var environment))
+            asset.Environment = environment;
+        if (Enum.TryParse<CriticalityLevel>(Tag("criticality"), true, out var criticality))
+            asset.Criticality = criticality;
     }
 
     /// <summary>Runs a Resource Graph query and buffers every page into a list.</summary>

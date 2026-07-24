@@ -45,6 +45,8 @@ public class NormalizationServiceTests
     {
         _sut.NormalizeIp("10.0.0.5").Should().Be("10.0.0.5");
         _sut.NormalizeIp("999.1.1.1").Should().BeNull();
+        _sut.NormalizeIp("127.0.0.1").Should().BeNull();
+        _sut.NormalizeIp("169.254.10.20").Should().BeNull();
         _sut.NormalizeIp(null).Should().BeNull();
     }
 
@@ -77,5 +79,25 @@ public class NormalizationServiceTests
         };
 
         _sut.Normalize(asset).SerialNumber.Should().BeNull();
+    }
+
+    [Fact]
+    public void Normalize_applies_namespace_specific_identifier_rules()
+    {
+        var asset = new DiscoveredAsset
+        {
+            Source = ConnectorType.Azure,
+            ExternalId = "azure-1",
+            Identifiers =
+            {
+                [MatchAttributes.AzureResourceId] = " /SUBSCRIPTIONS/ABC/VM/ONE ",
+                [MatchAttributes.SerialNumber] = " serial-01 "
+            }
+        };
+
+        var result = _sut.Normalize(asset);
+
+        result.Identifiers[MatchAttributes.AzureResourceId].Should().Be("/subscriptions/abc/vm/one");
+        result.Identifiers[MatchAttributes.SerialNumber].Should().Be("SERIAL-01");
     }
 }

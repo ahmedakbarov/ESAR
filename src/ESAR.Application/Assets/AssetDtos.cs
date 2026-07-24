@@ -59,8 +59,8 @@ public class AssetDto
         DataQualityScore = a.DataQualityScore,
         FirstSeen = a.FirstSeen,
         LastSeen = a.LastSeen,
-        PrimaryIp = a.IpAddresses.FirstOrDefault(i => i.IsPrimary)?.IpAddress
-                    ?? a.IpAddresses.FirstOrDefault()?.IpAddress,
+        PrimaryIp = a.IpAddresses.FirstOrDefault(i => i.IsActive && i.IsPrimary)?.IpAddress
+                    ?? a.IpAddresses.FirstOrDefault(i => i.IsActive)?.IpAddress,
         Sources = a.Sources.Select(s => s.ConnectorType.ToString()).Distinct().ToList()
     };
 }
@@ -96,7 +96,8 @@ public class AssetDetailDto : AssetDto
         dto.CloudResourceId = a.CloudResourceId;
         dto.CloudSubscriptionId = a.CloudSubscriptionId;
         dto.OwnerEmail = a.OwnerEmail;
-        dto.IpAddresses = a.IpAddresses.Select(i => new AssetIpDto(i.IpAddress, i.MacAddress, i.IsPrimary,
+        dto.IpAddresses = a.IpAddresses.Where(i => i.IsActive)
+            .Select(i => new AssetIpDto(i.IpAddress, i.MacAddress, i.IsPrimary,
             i.Source.ToString(), i.LastSeen)).ToList();
         dto.SourceDetails = a.Sources.Select(s => new AssetSourceDto(s.ConnectorType.ToString(), s.ExternalId,
             s.FirstSeen, s.LastSeen)).ToList();

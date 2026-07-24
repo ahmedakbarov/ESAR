@@ -175,6 +175,7 @@ public class AssetIngestionService : IAssetIngestionService
     private async Task UpdateExistingAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
     {
         await _merge.ApplyAsync(asset, incoming, ct);
+        await UpsertIdentifiersAsync(asset, incoming, ct);
         await UpsertSourceLinkAsync(asset, incoming, ct);
         _uow.Assets.Update(asset);
     }
@@ -192,6 +193,7 @@ public class AssetIngestionService : IAssetIngestionService
             CreatedBy = $"connector:{d.Source}"
         };
         await _merge.ApplyAsync(asset, d, ct);
+        await UpsertIdentifiersAsync(asset, d, ct);
         await UpsertSourceLinkAsync(asset, d, ct);
         await _uow.Assets.AddAsync(asset, ct);
         return asset;
@@ -227,4 +229,52 @@ public class AssetIngestionService : IAssetIngestionService
             ? asset.Hostname.ToLowerInvariant()
             : asset.NormalizedHostname;
     }
+
+    private async Task UpsertIdentifiersAsync(Asset asset, DiscoveredAsset discovered, CancellationToken ct)
+    {
+        var incomingKeys = discovered.Identifiers
+            .Where(pair => IsPersistentIdentifier(pair.Key))
+            .Select(pair => (Namespace: pair.Key, NormalizedValue: pair.Value))
+            .ToHashSet();
+
+        foreach (var stale in asset.Identifiers.Where(identifier =>
+                     identifier.Source == discovered.Source && identifier.IsActive &&
+                     !incomingKeys.Contains((identifier.Namespace, identifier.NormalizedValue))))
+            stale.IsActive = false;
+
+        foreach (var (identifierNamespace, normalizedValue) in discovered.Identifiers
+                     .Where(pair => IsPersistentIdentifier(pair.Key)))
+        {
+            var existing = asset.Identifiers.FirstOrDefault(identifier =>
+                identifier.Source == discovered.Source &&
+                identifier.Namespace == identifierNamespace &&
+                identifier.NormalizedValue == normalizedValue);
+            if (existing is null)
+            {
+                var created = new AssetIdentifier
+                {
+                    AssetId = asset.Id,
+                    Namespace = identifierNamespace,
+                    Value = normalizedValue,
+                    NormalizedValue = normalizedValue,
+                    Source = discovered.Source,
+                    FirstSeen = discovered.SeenAt,
+                    LastSeen = discovered.SeenAt,
+                    IsActive = true
+                };
+                asset.Identifiers.Add(created);
+                await _uow.AssetIdentifiers.AddAsync(created, ct);
+            }
+            else
+            {
+                existing.Value = normalizedValue;
+                existing.LastSeen = discovered.SeenAt;
+                existing.IsActive = true;
+            }
+        }
+    }
+
+    private static bool IsPersistentIdentifier(string identifierNamespace) =>
+        identifierNamespace is not (MatchAttributes.Hostname or MatchAttributes.MacAddress or
+            MatchAttributes.IpAddress or MatchAttributes.OperatingSystem or MatchAttributes.Domain);
 }

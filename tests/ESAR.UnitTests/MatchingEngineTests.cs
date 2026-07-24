@@ -108,7 +108,7 @@ public class MatchingEngineTests
     }
 
     [Fact]
-    public async Task Ip_only_positive_evidence_is_queued_for_review_even_below_threshold()
+    public async Task Weak_ip_only_positive_evidence_below_review_threshold_creates_new_asset()
     {
         var existing = new Asset
         {
@@ -135,9 +135,9 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        // Only IP matches: 0.15 / 0.95 ≈ 0.16 → far below review threshold.
-        result.Decision.Should().Be(MatchDecision.QueuedForReview);
-        result.MatchedAsset.Should().BeSameAs(existing);
+        // Only IP matches and the conflicting applicable evidence keeps the score below review threshold.
+        result.Decision.Should().Be(MatchDecision.NewAsset);
+        result.MatchedAsset.Should().BeNull();
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(0.1579m);
+        result.ConfidenceScore.Should().Be(1m);
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
         result.Explanations.Where(e => e.Matched).Should().ContainSingle(e => e.Attribute == MatchAttributes.IpAddress);
@@ -192,7 +192,7 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(0.5263m);
+        result.ConfidenceScore.Should().Be(1m);
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
     }
@@ -223,7 +223,7 @@ public class MatchingEngineTests
 
         var result = await _sut.MatchAsync(candidate);
 
-        result.ConfidenceScore.Should().Be(0.5789m);
+        result.ConfidenceScore.Should().Be(1m);
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
     }
@@ -246,7 +246,7 @@ public class MatchingEngineTests
             Hostname = "SHARED-NAME"
         });
 
-        result.ConfidenceScore.Should().BeLessThan(0.85m);
+        result.ConfidenceScore.Should().Be(1m);
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.MatchedAsset.Should().BeSameAs(existing);
     }
@@ -374,5 +374,40 @@ public class MatchingEngineTests
         result.Decision.Should().Be(MatchDecision.QueuedForReview);
         result.Explanations.Should().Contain(explanation =>
             explanation.Rule == "Hard identifier conflict safety policy");
+    }
+
+    [Fact]
+    public async Task Conflicting_hard_identifier_namespaces_require_review()
+    {
+        _rules.Setup(repository => repository.ListAsync(
+                It.IsAny<Expression<Func<MatchingRule, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MatchingRule>
+            {
+                new() { Name = "BIOS", Attribute = MatchAttributes.BiosUuid, MatchType = MatchType.Hard, Weight = 1m, Order = 10 },
+                new() { Name = "Serial", Attribute = MatchAttributes.SerialNumber, MatchType = MatchType.Hard, Weight = 1m, Order = 20 }
+            });
+        var byBios = new Asset { Hostname = "asset-a" };
+        var bySerial = new Asset { Hostname = "asset-b" };
+        _assets.Setup(repository => repository.FindHardIdentifierCandidatesAsync(
+                MatchAttributes.BiosUuid, "bios-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { byBios });
+        _assets.Setup(repository => repository.FindHardIdentifierCandidatesAsync(
+                MatchAttributes.SerialNumber, "SERIAL-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Asset> { bySerial });
+
+        var result = await _sut.MatchAsync(new DiscoveredAsset
+        {
+            Source = ConnectorType.Qualys,
+            ExternalId = "qualys-2",
+            Identifiers =
+            {
+                [MatchAttributes.BiosUuid] = "bios-1",
+                [MatchAttributes.SerialNumber] = "SERIAL-1"
+            }
+        });
+
+        result.Decision.Should().Be(MatchDecision.QueuedForReview);
+        result.Explanations.Should().Contain(explanation =>
+            explanation.Rule == "Cross-identifier convergence safety policy");
     }
 }

@@ -22,4 +22,8 @@
   <ItemGroup>
     <ProjectReference Include="..\ESAR.Application\ESAR.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\db\009_match_merge_safety.sql"
+                      LogicalName="Esar.Infrastructure.Database.009_match_merge_safety.sql" />
+  </ItemGroup>
 </Project>

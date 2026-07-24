@@ -138,7 +138,7 @@ public class ActiveDirectoryConnector : IConnector
                         disabled
                     })
                 };
-                asset.Identifiers[MatchAttributes.ObjectGuid] = objectGuid;
+                asset.Identifiers[MatchAttributes.AdComputerObjectGuid] = objectGuid;
                 if (disabled) asset.Tags["ad_disabled"] = "true";
                 // AD group membership, surfaced as tags so compliance policies can scope by group
                 // (e.g. "adgroup:domain admins") without a dedicated schema field — see PolicyScopeMatcher.

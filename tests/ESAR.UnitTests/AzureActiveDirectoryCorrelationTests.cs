@@ -9,6 +9,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using MatchType = Esar.Domain.Enums.MatchType;
 
 namespace Esar.UnitTests;
 

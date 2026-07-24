@@ -37,6 +37,7 @@ public class DiscoveredAsset
     public string? Department { get; set; }
     public string? BusinessUnit { get; set; }
     public string? Location { get; set; }
+    public string? Classification { get; set; }
     public EnvironmentType? Environment { get; set; }
     public CriticalityLevel? Criticality { get; set; }
 
@@ -82,6 +83,13 @@ public static class MatchAttributes
     public const string SerialNumber = "SerialNumber";
     public const string ObjectGuid = "ObjectGuid";
     public const string EndpointId = "EndpointId";
+    public const string AdComputerObjectGuid = "AdComputerObjectGuid";
+    public const string EntraDeviceId = "EntraDeviceId";
+    public const string AzureVmId = "AzureVmId";
+    public const string DefenderMachineId = "DefenderMachineId";
+    public const string CrowdStrikeDeviceId = "CrowdStrikeDeviceId";
+    public const string SentinelOneAgentId = "SentinelOneAgentId";
+    public const string CortexEndpointId = "CortexEndpointId";
     public const string MacAddress = "MacAddress";
     public const string Hostname = "Hostname";
     public const string IpAddress = "IpAddress";

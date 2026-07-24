@@ -20,12 +20,15 @@ public class MergeEngine : IMergeEngine
 {
     private readonly IUnitOfWork _uow;
     private readonly ISourcePriorityEngine _priority;
+    private readonly INormalizationService _normalization;
     private readonly ILogger<MergeEngine> _logger;
 
-    public MergeEngine(IUnitOfWork uow, ISourcePriorityEngine priority, ILogger<MergeEngine> logger)
+    public MergeEngine(IUnitOfWork uow, ISourcePriorityEngine priority, INormalizationService normalization,
+        ILogger<MergeEngine> logger)
     {
         _uow = uow;
         _priority = priority;
+        _normalization = normalization;
         _logger = logger;
     }
 
@@ -59,7 +62,11 @@ public class MergeEngine : IMergeEngine
             }, ct);
         }
 
-        await Set(nameof(asset.Hostname), asset.Hostname, incoming.Hostname, () => asset.Hostname = incoming.Hostname!);
+        await Set(nameof(asset.Hostname), asset.Hostname, incoming.Hostname, () =>
+        {
+            asset.Hostname = incoming.Hostname!;
+            asset.NormalizedHostname = _normalization.NormalizeHostname(incoming.Hostname);
+        });
         await Set(nameof(asset.Fqdn), asset.Fqdn, incoming.Fqdn, () => asset.Fqdn = incoming.Fqdn);
         await Set(nameof(asset.Domain), asset.Domain, incoming.Domain, () => asset.Domain = incoming.Domain);
         await Set(nameof(asset.OperatingSystem), asset.OperatingSystem, incoming.OperatingSystem,
@@ -89,6 +96,8 @@ public class MergeEngine : IMergeEngine
         await Set(nameof(asset.BusinessUnit), asset.BusinessUnit, incoming.BusinessUnit,
             () => asset.BusinessUnit = incoming.BusinessUnit);
         await Set(nameof(asset.Location), asset.Location, incoming.Location, () => asset.Location = incoming.Location);
+        await Set(nameof(asset.Classification), asset.Classification, incoming.Classification,
+            () => asset.Classification = incoming.Classification);
 
         if (incoming.AssetType is { } at && at != AssetType.Unknown && asset.AssetType == AssetType.Unknown)
         {
@@ -107,6 +116,8 @@ public class MergeEngine : IMergeEngine
         }
 
         await MergeInterfacesAsync(asset, incoming, ct);
+        foreach (var (key, value) in incoming.Attributes)
+            incoming.Tags.TryAdd($"attribute:{key}", value);
         await MergeTagsAsync(asset, incoming, ct);
         MergeSoftware(asset, incoming);
 
@@ -124,7 +135,19 @@ public class MergeEngine : IMergeEngine
 
         async Task Fill(string field, string? current, string? value, Action apply)
         {
-            if (!string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(value)) return;
+            if (string.IsNullOrWhiteSpace(value) || value == current) return;
+            survivorOwners.TryGetValue(field, out var currentOwnerName);
+            duplicateOwners.TryGetValue(field, out var incomingOwnerName);
+            if (string.Equals(currentOwnerName, "Manual", StringComparison.OrdinalIgnoreCase)) return;
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                if (string.IsNullOrWhiteSpace(incomingOwnerName) ||
+                    !Enum.TryParse<ConnectorType>(incomingOwnerName, out var incomingOwner))
+                    return;
+                ConnectorType? currentOwner = currentOwnerName is not null &&
+                    Enum.TryParse<ConnectorType>(currentOwnerName, out var parsedCurrent) ? parsedCurrent : null;
+                if (!await _priority.WinsAsync(incomingOwner, currentOwner, field, ct)) return;
+            }
             apply();
             if (duplicateOwners.TryGetValue(field, out var owner)) survivorOwners[field] = owner;
             await _uow.AssetHistories.AddAsync(new AssetHistory
@@ -137,6 +160,11 @@ public class MergeEngine : IMergeEngine
             }, ct);
         }
 
+        await Fill(nameof(Asset.Hostname), survivor.Hostname, duplicate.Hostname, () =>
+        {
+            survivor.Hostname = duplicate.Hostname;
+            survivor.NormalizedHostname = _normalization.NormalizeHostname(duplicate.Hostname);
+        });
         await Fill(nameof(Asset.Fqdn), survivor.Fqdn, duplicate.Fqdn, () => survivor.Fqdn = duplicate.Fqdn);
         await Fill(nameof(Asset.Domain), survivor.Domain, duplicate.Domain, () => survivor.Domain = duplicate.Domain);
         await Fill(nameof(Asset.OperatingSystem), survivor.OperatingSystem, duplicate.OperatingSystem,
@@ -206,6 +234,16 @@ public class MergeEngine : IMergeEngine
                 existing.Source = tag.Source;
             }
         }
+        foreach (var identifier in duplicate.Identifiers.ToList())
+        {
+            if (survivor.Identifiers.Any(existing =>
+                    existing.Namespace == identifier.Namespace &&
+                    existing.NormalizedValue == identifier.NormalizedValue &&
+                    existing.Source == identifier.Source))
+                continue;
+            identifier.AssetId = survivor.Id;
+            survivor.Identifiers.Add(identifier);
+        }
         foreach (var software in duplicate.Software.ToList())
         {
             if (survivor.Software.Any(existing =>
@@ -214,6 +252,58 @@ public class MergeEngine : IMergeEngine
                 continue;
             software.AssetId = survivor.Id;
             survivor.Software.Add(software);
+        }
+
+        foreach (var match in await _uow.MatchRecords.ListAsync(record =>
+                     record.MatchedAssetId == duplicate.Id || record.CreatedAssetId == duplicate.Id, ct))
+        {
+            if (match.MatchedAssetId == duplicate.Id) match.MatchedAssetId = survivor.Id;
+            if (match.CreatedAssetId == duplicate.Id) match.CreatedAssetId = survivor.Id;
+            _uow.MatchRecords.Update(match);
+        }
+        foreach (var approval in await _uow.Approvals.ListAsync(item => item.AssetId == duplicate.Id, ct))
+        {
+            approval.AssetId = survivor.Id;
+            _uow.Approvals.Update(approval);
+        }
+        foreach (var incident in await _uow.Incidents.ListAsync(item => item.AssetId == duplicate.Id, ct))
+        {
+            incident.AssetId = survivor.Id;
+            _uow.Incidents.Update(incident);
+        }
+        await ReparentRelationshipsAsync(survivor.Id, duplicate.Id, ct);
+        await ReparentComplianceAsync(survivor.Id, duplicate.Id, ct);
+        foreach (var assetEvent in await _uow.AssetEvents.ListAsync(item => item.AssetId == duplicate.Id, ct))
+        {
+            assetEvent.AssetId = survivor.Id;
+            _uow.AssetEvents.Update(assetEvent);
+        }
+        var duplicateRisk = await _uow.AssetRisks.FirstOrDefaultAsync(item => item.AssetId == duplicate.Id, ct);
+        var survivorRisk = await _uow.AssetRisks.FirstOrDefaultAsync(item => item.AssetId == survivor.Id, ct);
+        if (duplicateRisk is not null)
+        {
+            if (survivorRisk is null)
+            {
+                duplicateRisk.AssetId = survivor.Id;
+                _uow.AssetRisks.Update(duplicateRisk);
+            }
+            else
+            {
+                survivorRisk.RiskScore = Math.Max(survivorRisk.RiskScore, duplicateRisk.RiskScore);
+                survivorRisk.VulnerabilitiesCritical =
+                    Math.Max(survivorRisk.VulnerabilitiesCritical, duplicateRisk.VulnerabilitiesCritical);
+                survivorRisk.VulnerabilitiesHigh =
+                    Math.Max(survivorRisk.VulnerabilitiesHigh, duplicateRisk.VulnerabilitiesHigh);
+                survivorRisk.VulnerabilitiesMedium =
+                    Math.Max(survivorRisk.VulnerabilitiesMedium, duplicateRisk.VulnerabilitiesMedium);
+                survivorRisk.VulnerabilitiesLow =
+                    Math.Max(survivorRisk.VulnerabilitiesLow, duplicateRisk.VulnerabilitiesLow);
+                survivorRisk.ExposureScore = Math.Max(survivorRisk.ExposureScore, duplicateRisk.ExposureScore);
+                survivorRisk.LastCalculatedAt =
+                    survivorRisk.LastCalculatedAt > duplicateRisk.LastCalculatedAt
+                        ? survivorRisk.LastCalculatedAt : duplicateRisk.LastCalculatedAt;
+                _uow.AssetRisks.Remove(duplicateRisk);
+            }
         }
 
         survivor.FirstSeen = duplicate.FirstSeen < survivor.FirstSeen ? duplicate.FirstSeen : survivor.FirstSeen;
@@ -242,6 +332,13 @@ public class MergeEngine : IMergeEngine
 
     private async Task MergeInterfacesAsync(Asset asset, DiscoveredAsset incoming, CancellationToken ct)
     {
+        foreach (var previous in asset.IpAddresses.Where(i => i.Source == incoming.Source && i.IsActive))
+        {
+            previous.IsActive = false;
+            previous.ValidTo = incoming.SeenAt;
+            previous.IsPrimary = false;
+        }
+
         foreach (var iface in incoming.Interfaces)
         {
             if (iface.IpAddress is null && iface.MacAddress is null) continue;
@@ -253,10 +350,12 @@ public class MergeEngine : IMergeEngine
 
             // Keep one observation per source. AD confirming an Azure IP must not mutate
             // the Azure observation's provenance or freshness.
-            var existing = asset.IpAddresses.FirstOrDefault(i =>
-                i.Source == incoming.Source &&
-                ((iface.IpAddress != null && i.IpAddress == iface.IpAddress) ||
-                 (iface.IpAddress == null && iface.MacAddress != null && i.MacAddress == iface.MacAddress)));
+            var existing = iface.MacAddress is not null
+                ? asset.IpAddresses.FirstOrDefault(i =>
+                    i.Source == incoming.Source && i.MacAddress == iface.MacAddress)
+                : asset.IpAddresses.FirstOrDefault(i =>
+                    i.Source == incoming.Source && i.MacAddress == null &&
+                    iface.IpAddress != null && i.IpAddress == iface.IpAddress);
             if (existing is null)
             {
                 var created = new AssetIp
@@ -266,7 +365,9 @@ public class MergeEngine : IMergeEngine
                     MacAddress = iface.MacAddress,
                     IsPrimary = iface.IsPrimary,
                     Source = incoming.Source,
-                    LastSeen = incoming.SeenAt
+                    FirstSeen = incoming.SeenAt,
+                    LastSeen = incoming.SeenAt,
+                    IsActive = true
                 };
                 asset.IpAddresses.Add(created);
                 // Asset children use client-generated GUID keys. Register them explicitly
@@ -276,10 +377,14 @@ public class MergeEngine : IMergeEngine
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(iface.IpAddress))
+                    existing.IpAddress = iface.IpAddress;
                 if (!string.IsNullOrWhiteSpace(iface.MacAddress))
                     existing.MacAddress = iface.MacAddress;
                 existing.IsPrimary = iface.IsPrimary;
                 existing.LastSeen = incoming.SeenAt;
+                existing.ValidTo = null;
+                existing.IsActive = true;
             }
         }
     }
@@ -341,6 +446,53 @@ public class MergeEngine : IMergeEngine
         catch (JsonException)
         {
             return new Dictionary<string, string>();
+        }
+    }
+
+    private async Task ReparentRelationshipsAsync(Guid survivorId, Guid duplicateId, CancellationToken ct)
+    {
+        var relationships = await _uow.Relationships.ListAsync(item =>
+            item.SourceAssetId == duplicateId || item.TargetAssetId == duplicateId, ct);
+        foreach (var relationship in relationships)
+        {
+            var sourceId = relationship.SourceAssetId == duplicateId ? survivorId : relationship.SourceAssetId;
+            var targetId = relationship.TargetAssetId == duplicateId ? survivorId : relationship.TargetAssetId;
+            if (sourceId == targetId || (await _uow.Relationships.FirstOrDefaultAsync(existing =>
+                    existing.Id != relationship.Id && existing.SourceAssetId == sourceId &&
+                    existing.TargetAssetId == targetId && existing.Type == relationship.Type, ct)) is not null)
+            {
+                _uow.Relationships.Remove(relationship);
+                continue;
+            }
+            relationship.SourceAssetId = sourceId;
+            relationship.TargetAssetId = targetId;
+            _uow.Relationships.Update(relationship);
+        }
+    }
+
+    private async Task ReparentComplianceAsync(Guid survivorId, Guid duplicateId, CancellationToken ct)
+    {
+        var duplicateRecords = await _uow.AssetCompliance.ListAsync(item => item.AssetId == duplicateId, ct);
+        foreach (var record in duplicateRecords)
+        {
+            var existing = await _uow.AssetCompliance.FirstOrDefaultAsync(item =>
+                item.AssetId == survivorId && item.Control == record.Control, ct);
+            if (existing is null)
+            {
+                record.AssetId = survivorId;
+                _uow.AssetCompliance.Update(record);
+            }
+            else
+            {
+                if (record.CheckedAt > existing.CheckedAt)
+                {
+                    existing.Status = record.Status;
+                    existing.Details = record.Details;
+                    existing.EvidenceSource = record.EvidenceSource;
+                    existing.CheckedAt = record.CheckedAt;
+                }
+                _uow.AssetCompliance.Remove(record);
+            }
         }
     }
 }

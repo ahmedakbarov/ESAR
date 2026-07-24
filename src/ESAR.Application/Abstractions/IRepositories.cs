@@ -40,6 +40,8 @@ public interface IAssetRepository : IRepository<Asset>
         CancellationToken ct = default);
     /// <summary>Loads soft-match candidates by normalized hostname, MAC or IP overlap.</summary>
     Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname, IReadOnlyCollection<string> macs,
+        IReadOnlyCollection<string> ips, DateTime networkEvidenceCutoff, CancellationToken ct = default);
+    Task<List<Asset>> FindSoftCandidatesAsync(string? normalizedHostname, IReadOnlyCollection<string> macs,
         IReadOnlyCollection<string> ips, CancellationToken ct = default);
 }
 
@@ -47,9 +49,12 @@ public interface IUnitOfWork
 {
     IAssetRepository Assets { get; }
     IRepository<AssetSource> AssetSources { get; }
+    IRepository<AssetIdentifier> AssetIdentifiers { get; }
     IRepository<AssetIp> AssetIps { get; }
     IRepository<AssetTag> AssetTags { get; }
     IRepository<AssetHistory> AssetHistories { get; }
+    IRepository<AssetEvent> AssetEvents { get; }
+    IRepository<AssetRisk> AssetRisks { get; }
     IRepository<AssetCompliance> AssetCompliance { get; }
     IRepository<AssetRelationship> Relationships { get; }
     IRepository<CompliancePolicy> CompliancePolicies { get; }
