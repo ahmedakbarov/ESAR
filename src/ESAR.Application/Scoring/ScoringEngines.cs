@@ -22,6 +22,9 @@ public class DataQualityEngine : IDataQualityEngine
     private static readonly Regex ValidHostname =
         new(@"^[a-z0-9]([a-z0-9\-\.]{0,252}[a-z0-9])?$", RegexOptions.Compiled);
 
+    /// <summary>Sources not seen within this window no longer count as corroborating evidence.</summary>
+    private static readonly TimeSpan SourceFreshnessWindow = TimeSpan.FromDays(30);
+
     public IReadOnlyList<DataQualityIssue> Evaluate(Asset asset)
     {
         var issues = new List<DataQualityIssue>();
@@ -41,17 +44,27 @@ public class DataQualityEngine : IDataQualityEngine
             Add("MISSING_OS", "Operating system is unknown", 8);
         if (asset.AssetType == AssetType.Unknown)
             Add("MISSING_ASSET_TYPE", "Asset type could not be determined", 8);
-        if (!ValidHostname.IsMatch(asset.NormalizedHostname))
+        // A blank hostname is a completeness problem, not a naming-rule violation; only
+        // non-empty names are checked against the naming rules.
+        if (string.IsNullOrWhiteSpace(asset.NormalizedHostname))
+            Add("MISSING_HOSTNAME", "Asset has no hostname", 10);
+        else if (!ValidHostname.IsMatch(asset.NormalizedHostname))
             Add("INVALID_HOSTNAME", $"Hostname '{asset.Hostname}' violates naming rules", 10);
         if (!asset.IpAddresses.Any(ip => ip.IsActive))
             Add("NO_IP_ADDRESS", "No IP address is known for this asset", 8);
         if (asset.LastSeen < DateTime.UtcNow.AddDays(-30))
             Add("STALE_TELEMETRY", $"No source has seen this asset since {asset.LastSeen:yyyy-MM-dd}", 12);
-        if (asset.Sources.Count <= 1)
-            Add("SINGLE_SOURCE", "Asset is reported by a single source only", 5);
 
-        // Conflicting hostname reports between sources indicate a bad merge or DNS drift.
-        var distinctReported = asset.Sources
+        // Source-corroboration checks only count sources that still report the asset. A
+        // connector that last saw the asset months ago must neither vouch for it
+        // (SINGLE_SOURCE) nor hold a stale hostname against it forever (CONFLICTING_HOSTNAME
+        // after a rename).
+        var freshCutoff = DateTime.UtcNow - SourceFreshnessWindow;
+        var freshSources = asset.Sources.Where(s => s.LastSeen >= freshCutoff).ToList();
+        if (freshSources.Count <= 1)
+            Add("SINGLE_SOURCE", "Asset is reported by a single active source only", 5);
+
+        var distinctReported = freshSources
             .Where(s => !string.IsNullOrWhiteSpace(s.SourceHostname))
             .Select(s => s.SourceHostname!.Split('.')[0].ToLowerInvariant())
             .Distinct()
@@ -59,7 +72,7 @@ public class DataQualityEngine : IDataQualityEngine
         if (distinctReported.Count > 1)
             Add("CONFLICTING_HOSTNAME", $"Sources disagree on hostname: {string.Join(", ", distinctReported)}", 10);
 
-        asset.DataQualityScore = Math.Max(0, 100 - issues.Sum(i => i.Penalty));
+        asset.DataQualityScore = Math.Clamp(100 - issues.Sum(i => i.Penalty), 0, 100);
         asset.DataQualityIssuesJson = JsonSerializer.Serialize(issues);
         return issues;
     }
