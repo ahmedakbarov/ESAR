@@ -66,6 +66,7 @@ public class ConnectorsController : ControllerBase
     {
         if (!Enum.TryParse<ConnectorType>(request.Type, true, out var type))
             return BadRequest(new { error = $"Unknown connector type '{request.Type}'." });
+        if (ValidateRequest(request, type) is { } invalid) return invalid;
 
         var connector = new ConnectorConfig
         {
@@ -93,6 +94,7 @@ public class ConnectorsController : ControllerBase
     {
         var connector = await _uow.Connectors.GetByIdAsync(id, ct);
         if (connector is null) return NotFound();
+        if (ValidateRequest(request, connector.Type) is { } invalid) return invalid;
 
         connector.Name = request.Name.Trim();
         connector.Enabled = request.Enabled;
@@ -124,6 +126,39 @@ public class ConnectorsController : ControllerBase
         await _audit.LogAsync(AuditAction.ConfigurationChanged, nameof(ConnectorConfig),
             id.ToString(), new { action = "deleted" }, ct);
         return NoContent();
+    }
+
+    public record TestConnectionRequest(Guid? Id, string Type, Dictionary<string, string> Settings);
+
+    /// <summary>
+    /// Probes connectivity/credentials for form settings without saving anything. When
+    /// <c>Id</c> is supplied, masked "***" values are resolved from the stored connector so an
+    /// edit form can test without retyping secrets.
+    /// </summary>
+    [HttpPost("test-connection")]
+    [Authorize("connectors.manage")]
+    public async Task<IActionResult> TestConnection([FromBody] TestConnectionRequest request, CancellationToken ct)
+    {
+        if (!Enum.TryParse<ConnectorType>(request.Type, true, out var type))
+            return BadRequest(new { error = $"Unknown connector type '{request.Type}'." });
+        var errors = ConnectorSettingsValidator.Validate(type, request.Settings);
+        if (errors.Count > 0) return BadRequest(new { error = "Validation failed.", errors });
+
+        string effectiveJson;
+        if (request.Id is { } id)
+        {
+            var stored = await _uow.Connectors.GetByIdAsync(id, ct);
+            if (stored is null) return NotFound();
+            effectiveJson = MergeSettings(stored.SettingsJson, request.Settings);
+        }
+        else
+        {
+            effectiveJson = EncryptSettings(request.Settings);
+        }
+
+        var implementation = _factory.Resolve(type);
+        var health = await implementation.CheckHealthAsync(DecryptSettings(effectiveJson), ct);
+        return Ok(new { health.Healthy, health.Message });
     }
 
     /// <summary>Validates connectivity/credentials without syncing.</summary>
@@ -207,6 +242,23 @@ public class ConnectorsController : ControllerBase
             j.StartedAt, j.CompletedAt, j.AssetsDiscovered, j.AssetsCreated, j.AssetsUpdated,
             j.AssetsFailed, j.RetryCount, j.ErrorMessage, j.TriggeredBy
         }));
+    }
+
+    /// <summary>Shared create/update validation: top-level fields plus the per-type settings schema.
+    /// Returns a 400 result carrying field-level errors, or null when the request is valid.</summary>
+    private IActionResult? ValidateRequest(ConnectorRequest request, ConnectorType type)
+    {
+        var errors = ConnectorSettingsValidator.Validate(type, request.Settings);
+        if (string.IsNullOrWhiteSpace(request.Name))
+            errors["name"] = "Connector name is required.";
+        if (!string.IsNullOrWhiteSpace(request.CronSchedule) &&
+            request.CronSchedule.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).Length != 5)
+            errors["cronSchedule"] = "Cron expression needs five fields: minute hour day month weekday.";
+        if (request.RateLimitPerMinute < 1)
+            errors["rateLimitPerMinute"] = "Rate limit must be at least 1 request per minute.";
+        if (request.MaxRetries is < 0 or > 10)
+            errors["maxRetries"] = "Retries must be between 0 and 10.";
+        return errors.Count > 0 ? BadRequest(new { error = "Validation failed.", errors }) : null;
     }
 
     private object ToDto(ConnectorConfig c) => new

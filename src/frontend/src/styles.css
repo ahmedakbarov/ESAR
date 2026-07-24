@@ -98,6 +98,32 @@ input:focus, select:focus { border-color: var(--accent); }
 .filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .pagination { display: flex; gap: 8px; align-items: center; margin-top: 14px; color: var(--muted); }
 
+/* Row action (kebab) menu */
+.row-menu { position: relative; display: inline-block; }
+.row-menu > button.kebab {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 10px; border-radius: 6px; font-weight: 700; letter-spacing: 1px;
+}
+.row-menu .menu {
+  position: absolute; right: 0; top: 32px; z-index: 120; min-width: 170px;
+  display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+.row-menu .menu button {
+  all: unset; cursor: pointer; padding: 7px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--text); text-align: left;
+}
+.row-menu .menu button:hover { background: var(--panel-2); }
+.row-menu .menu button:disabled { opacity: 0.5; cursor: not-allowed; }
+.row-menu .menu button.danger-item { color: var(--red); }
+.row-menu .menu .separator { height: 1px; background: var(--border); margin: 4px 2px; }
+.row-menu-overlay { position: fixed; inset: 0; z-index: 110; }
+
+/* Inline field validation */
+.field-error { color: var(--red); font-size: 11px; margin-top: 3px; max-width: 260px; }
+input.invalid, select.invalid { border-color: var(--red); }
+
 .login-page {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
 }

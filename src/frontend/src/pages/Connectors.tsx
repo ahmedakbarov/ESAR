@@ -75,13 +75,48 @@ interface SettingField {
   label: string;
   placeholder?: string;
   type?: 'checkbox';
+  /// Validation schema (mirrored by ConnectorSettingsValidator on the backend).
+  required?: boolean;
+  kind?: 'url' | 'host' | 'port' | 'number' | 'guid';
+}
+
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HOST_RE = /^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^(\d{1,3}\.){3}\d{1,3}$/;
+
+/// Field-level validation matching the backend schema; returns an error message or null.
+function validateSetting(field: SettingField, raw: string): string | null {
+  const value = (raw ?? '').trim();
+  if (!value) return field.required ? 'This field is required.' : null;
+  if (value === '***') return null; // masked stored secret
+  switch (field.kind) {
+    case 'url':
+      try {
+        const u = new URL(value);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Must be an http(s) URL.';
+      } catch { return 'Must be an absolute http(s) URL, e.g. https://host.example.com.'; }
+      return null;
+    case 'host':
+      if (value.includes('://')) return 'Enter a hostname or IP without a scheme, e.g. dc01.corp.local.';
+      return HOST_RE.test(value) ? null : 'Not a valid hostname or IPv4 address.';
+    case 'port': {
+      const port = Number(value);
+      return Number.isInteger(port) && port >= 1 && port <= 65535
+        ? null : 'Port must be a number between 1 and 65535.';
+    }
+    case 'number':
+      return /^\d+$/.test(value) ? null : 'Must be a non-negative number.';
+    case 'guid':
+      return GUID_RE.test(value) ? null : 'Must be a GUID, e.g. 00000000-0000-0000-0000-000000000000.';
+    default:
+      return null;
+  }
 }
 
 // Shared by every Entra ID (Azure AD) app-registration connector — see AadConnectorBase.AcquireTokenAsync.
 const AAD_CREDENTIAL_FIELDS: SettingField[] = [
-  { key: 'tenantId', label: 'Tenant ID' },
-  { key: 'clientId', label: 'Client ID' },
-  { key: 'clientSecret', label: 'Client secret' },
+  { key: 'tenantId', label: 'Tenant ID', required: true, kind: 'guid' },
+  { key: 'clientId', label: 'Client ID', required: true, kind: 'guid' },
+  { key: 'clientSecret', label: 'Client secret', required: true },
 ];
 
 // Structured per-field layout for every connector type with a real implementation (see
@@ -89,22 +124,24 @@ const AAD_CREDENTIAL_FIELDS: SettingField[] = [
 // Any type without an entry here falls back to the raw key=value textarea below.
 const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
   CortexXdr: [
-    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api-<tenant>.xdr.<region>.paloaltonetworks.com' },
-    { key: 'apiKeyId', label: 'API Key ID' },
-    { key: 'apiKey', label: 'API Key (secret)' },
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api-<tenant>.xdr.<region>.paloaltonetworks.com',
+      required: true, kind: 'url' },
+    { key: 'apiKeyId', label: 'API Key ID', required: true },
+    { key: 'apiKey', label: 'API Key (secret)', required: true },
   ],
   ActiveDirectory: [
-    { key: 'server', label: 'Domain controller (FQDN)', placeholder: 'dc01.esar.local' },
-    { key: 'baseDn', label: 'Base DN', placeholder: 'DC=esar,DC=local' },
-    { key: 'username', label: 'Bind username (UPN)', placeholder: 'svc_esar_ad@esar.local' },
-    { key: 'password', label: 'Password' },
-    { key: 'port', label: 'Port', placeholder: '636' },
+    { key: 'server', label: 'Domain controller (FQDN)', placeholder: 'dc01.esar.local',
+      required: true, kind: 'host' },
+    { key: 'baseDn', label: 'Base DN', placeholder: 'DC=esar,DC=local', required: true },
+    { key: 'username', label: 'Bind username (UPN)', placeholder: 'svc_esar_ad@esar.local', required: true },
+    { key: 'password', label: 'Password', required: true },
+    { key: 'port', label: 'Port', placeholder: '636', kind: 'port' },
     { key: 'useSsl', label: 'Use LDAPS (required)', type: 'checkbox' },
     { key: 'authType', label: 'Auth type', placeholder: 'Basic' },
-    { key: 'timeoutSeconds', label: 'Timeout (seconds)', placeholder: '30' },
+    { key: 'timeoutSeconds', label: 'Timeout (seconds)', placeholder: '30', kind: 'number' },
     { key: 'resolveDns', label: 'Resolve DNS (needs private AD DNS)', type: 'checkbox' },
-    { key: 'dnsTimeoutSeconds', label: 'DNS timeout (seconds)', placeholder: '5' },
-    { key: 'dnsMaxConcurrency', label: 'DNS max concurrency', placeholder: '8' },
+    { key: 'dnsTimeoutSeconds', label: 'DNS timeout (seconds)', placeholder: '5', kind: 'number' },
+    { key: 'dnsMaxConcurrency', label: 'DNS max concurrency', placeholder: '8', kind: 'number' },
     { key: 'macAttributes', label: 'MAC attributes (comma-separated LDAP attribute names)' },
   ],
   Azure: [
@@ -115,37 +152,42 @@ const CONNECTOR_FIELDS: Record<string, SettingField[]> = {
   Intune: AAD_CREDENTIAL_FIELDS,
   MicrosoftDefender: AAD_CREDENTIAL_FIELDS,
   VmwareVCenter: [
-    { key: 'baseUrl', label: 'vCenter URL', placeholder: 'https://vcenter.example.com' },
-    { key: 'username', label: 'Username' },
-    { key: 'password', label: 'Password' },
+    { key: 'baseUrl', label: 'vCenter URL', placeholder: 'https://vcenter.example.com',
+      required: true, kind: 'url' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', required: true },
     { key: 'allowSelfSignedCert', label: 'Accept self-signed certificate (appliance/lab)', type: 'checkbox' },
   ],
   CrowdStrike: [
-    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.crowdstrike.com' },
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client secret' },
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.crowdstrike.com',
+      required: true, kind: 'url' },
+    { key: 'clientId', label: 'Client ID', required: true },
+    { key: 'clientSecret', label: 'Client secret', required: true },
   ],
   SentinelOne: [
-    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://<tenant>.sentinelone.net' },
-    { key: 'apiToken', label: 'API token' },
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://<tenant>.sentinelone.net',
+      required: true, kind: 'url' },
+    { key: 'apiToken', label: 'API token', required: true },
   ],
   Tenable: [
-    { key: 'accessKey', label: 'Access key' },
-    { key: 'secretKey', label: 'Secret key' },
+    { key: 'accessKey', label: 'Access key', required: true },
+    { key: 'secretKey', label: 'Secret key', required: true },
   ],
   Qualys: [
-    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://gateway.qg1.apps.qualys.com' },
-    { key: 'username', label: 'Username' },
-    { key: 'password', label: 'Password' },
+    { key: 'baseUrl', label: 'Base URL', placeholder: 'https://gateway.qg1.apps.qualys.com',
+      required: true, kind: 'url' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', required: true },
   ],
   ServiceNowCmdb: [
-    { key: 'instanceUrl', label: 'Instance URL', placeholder: 'https://<instance>.service-now.com' },
-    { key: 'username', label: 'Username' },
-    { key: 'password', label: 'Password' },
+    { key: 'instanceUrl', label: 'Instance URL', placeholder: 'https://<instance>.service-now.com',
+      required: true, kind: 'url' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', required: true },
     { key: 'table', label: 'CMDB table (optional)', placeholder: 'cmdb_ci_computer' },
   ],
   GenericRest: [
-    { key: 'url', label: 'URL' },
+    { key: 'url', label: 'URL', required: true, kind: 'url' },
     { key: 'authHeader', label: 'Auth header (optional)', placeholder: 'Authorization: Bearer xyz' },
     { key: 'itemsPath', label: 'Items path (optional, dot path to the array; default = response root)' },
     { key: 'idField', label: 'ID field', placeholder: 'id' },
@@ -179,8 +221,8 @@ const CONNECTOR_HELP: Record<string, string> = {
     'item to ESAR asset fields — leave optional ones blank if the source does not provide them.',
 };
 
-function SettingFieldInput({ field, value, onChange }: {
-  field: SettingField; value: string; onChange: (value: string) => void;
+function SettingFieldInput({ field, value, error, onChange }: {
+  field: SettingField; value: string; error?: string | null; onChange: (value: string) => void;
 }) {
   if (field.type === 'checkbox') {
     return (
@@ -192,15 +234,49 @@ function SettingFieldInput({ field, value, onChange }: {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <label className="muted" style={{ fontSize: 12 }}>{field.label}</label>
+      <label className="muted" style={{ fontSize: 12 }}>
+        {field.label}{field.required && <span style={{ color: 'var(--red)' }}> *</span>}
+      </label>
       <input
         type={isSecretKey(field.key) ? 'password' : 'text'}
+        className={error ? 'invalid' : undefined}
         placeholder={field.placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{ width: 260 }}
       />
+      {error && <div className="field-error">{error}</div>}
     </div>
+  );
+}
+
+/// Kebab (three-dot) menu holding every row action.
+function RowMenu({ disabled, items }: {
+  disabled?: boolean;
+  items: { label: string; onClick: () => void; danger?: boolean; separatorBefore?: boolean }[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="row-menu">
+      <button type="button" className="kebab" disabled={disabled} aria-label="Actions"
+        onClick={() => setOpen(!open)}>⋯</button>
+      {open && (
+        <>
+          <div className="row-menu-overlay" onClick={() => setOpen(false)} />
+          <div className="menu">
+            {items.map((item) => (
+              <span key={item.label} style={{ display: 'contents' }}>
+                {item.separatorBefore && <div className="separator" />}
+                <button type="button" className={item.danger ? 'danger-item' : undefined}
+                  onClick={() => { setOpen(false); item.onClick(); }}>
+                  {item.label}
+                </button>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
   );
 }
 
@@ -212,6 +288,9 @@ export default function Connectors() {
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState<ConnectorForm | null>(null);
   const [error, setError] = useState('');
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
+  const [testResult, setTestResult] = useState<{ healthy: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const load = () => {
     client.get('/connectors').then((r) => setConnectors(r.data));
@@ -222,10 +301,53 @@ export default function Connectors() {
   const setField = (key: string, value: string) => {
     if (!form) return;
     setForm({ ...form, settingsFields: { ...form.settingsFields, [key]: value } });
+    // A change invalidates both the server's last verdict and any stale test result.
+    setServerErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setTestResult(null);
+  };
+
+  // Real-time validation: recomputed on every keystroke, straight from the form state.
+  const fields = form ? CONNECTOR_FIELDS[form.type] : undefined;
+  const fieldErrors: Record<string, string> = {};
+  if (form && fields) {
+    for (const f of fields) {
+      const validation = validateSetting(f, form.settingsFields[f.key] ?? '');
+      if (validation) fieldErrors[f.key] = validation;
+    }
+  }
+  const nameError = form !== null && !form.name.trim() ? 'Connector name is required.' : null;
+  const cronError = form !== null && form.cronSchedule.trim() !== '' &&
+    form.cronSchedule.trim().split(/\s+/).length !== 5
+    ? 'Cron expression needs five fields: minute hour day month weekday.' : null;
+  const formInvalid = form !== null &&
+    (nameError !== null || cronError !== null || Object.keys(fieldErrors).length > 0);
+
+  const testConnection = async () => {
+    if (!form || formInvalid) return;
+    setTesting(true);
+    setTestResult(null);
+    setError('');
+    try {
+      const settings = form.type in CONNECTOR_FIELDS ? form.settingsFields : parseSettings(form.settingsText);
+      const { data } = await client.post('/connectors/test-connection',
+        { id: form.id ?? null, type: form.type, settings });
+      setTestResult(data);
+    } catch (err: any) {
+      const data = err.response?.data;
+      if (data?.errors) setServerErrors(data.errors);
+      setTestResult({ healthy: false, message: data?.error ?? 'Connection test failed' });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const save = async () => {
-    if (!form) return;
+    if (!form || formInvalid) return;
     setError('');
     const settings = form.type in CONNECTOR_FIELDS ? form.settingsFields : parseSettings(form.settingsText);
     const payload = {
@@ -243,9 +365,13 @@ export default function Connectors() {
       if (form.id) await client.put(`/connectors/${form.id}`, payload);
       else await client.post('/connectors', payload);
       setForm(null);
+      setServerErrors({});
+      setTestResult(null);
       load();
     } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Save failed');
+      const data = err.response?.data;
+      if (data?.errors) setServerErrors(data.errors);
+      setError(data?.error ?? 'Save failed');
     }
   };
 
@@ -282,13 +408,16 @@ export default function Connectors() {
     setExpanded(id);
   };
 
-  const fields = form ? CONNECTOR_FIELDS[form.type] : undefined;
-
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
         <h3>Connectors</h3>
-        <button onClick={() => { setError(''); setForm(form ? null : { ...emptyConnector }); }}>
+        <button onClick={() => {
+          setError('');
+          setServerErrors({});
+          setTestResult(null);
+          setForm(form ? null : { ...emptyConnector });
+        }}>
           {form ? 'Cancel' : 'New connector'}
         </button>
       </div>
@@ -302,8 +431,10 @@ export default function Connectors() {
                 <div>
                   <label className="muted" style={{ fontSize: 12 }}>Connector name</label>
                   <input placeholder="Example: AD production" value={form.name}
+                    className={nameError ? 'invalid' : undefined}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     style={{ width: '100%', marginTop: 3 }} />
+                  {nameError && <div className="field-error">{nameError}</div>}
                 </div>
                 <div>
                   <label className="muted" style={{ fontSize: 12 }}>Connector type</label>
@@ -340,8 +471,10 @@ export default function Connectors() {
                   <div>
                     <label className="muted" style={{ fontSize: 12 }}>Cron expression</label>
                     <input placeholder="0 */4 * * *" value={form.cronSchedule}
+                      className={cronError ? 'invalid' : undefined}
                       onChange={(e) => setForm({ ...form, cronSchedule: e.target.value })}
                       style={{ width: '100%', marginTop: 3 }} />
+                    {cronError && <div className="field-error">{cronError}</div>}
                   </div>
                 )}
                 <p className="muted" style={{ fontSize: 12, lineHeight: 1.4, margin: 0 }}>
@@ -403,6 +536,7 @@ export default function Connectors() {
                 {fields.map((f) => (
                   <SettingFieldInput key={f.key} field={f}
                     value={form.settingsFields[f.key] ?? ''}
+                    error={fieldErrors[f.key] ?? serverErrors[f.key]}
                     onChange={(v) => setField(f.key, v)} />
                 ))}
               </div>
@@ -424,8 +558,25 @@ export default function Connectors() {
           )}
 
           {error && <div className="error" style={{ margin: '8px 0' }}>{error}</div>}
-          <div style={{ marginTop: 8 }}>
-            <button onClick={save}>Save connector</button>
+          <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={save} disabled={formInvalid}
+              title={formInvalid ? 'Fix the highlighted fields first' : undefined}>
+              Save connector
+            </button>
+            <button className="secondary" onClick={testConnection} disabled={formInvalid || testing}>
+              {testing ? 'Testing…' : 'Test connection'}
+            </button>
+            {testResult && (
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <Badge value={testResult.healthy ? 'Succeeded' : 'Failed'} />
+                <span className="muted" style={{ fontSize: 12, maxWidth: 420 }}>{testResult.message}</span>
+              </span>
+            )}
+            {formInvalid && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                Fix the highlighted fields to enable saving.
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -454,28 +605,32 @@ export default function Connectors() {
                 </td>
                 <td className="muted">{formatDate(c.lastRunAt)}</td>
                 <td><Badge value={c.lastRunStatus} /></td>
-                <td>
-                  <button disabled={busy === c.id} onClick={() => run(c.id)} style={{ marginRight: 6 }}>
-                    {busy === c.id ? 'Running…' : 'Sync now'}
-                  </button>
-                  <button className="secondary" disabled={busy === c.id} onClick={() => healthCheck(c.id)}
-                    style={{ marginRight: 6 }}>
-                    Health
-                  </button>
-                  <button className="secondary" onClick={() => setForm({
-                    id: c.id, name: c.name, type: c.type, enabled: c.enabled,
-                    cronSchedule: c.cronSchedule, priority: c.priority,
-                    maxRetries: c.maxRetries ?? 3, rateLimitPerMinute: c.rateLimitPerMinute,
-                    defaultSyncMode: c.defaultSyncMode,
-                    settingsText: Object.entries(c.settings ?? {})
-                      .map(([k, v]) => `${k}=${v}`).join('\n'),
-                    settingsFields: { ...(c.settings ?? {}) },
-                  })} style={{ marginRight: 6 }}>
-                    Edit
-                  </button>
-                  <button className="danger" disabled={busy === c.id} onClick={() => remove(c.id, c.name)}>
-                    Delete
-                  </button>
+                <td style={{ textAlign: 'right' }}>
+                  {busy === c.id
+                    ? <span className="muted">Working…</span>
+                    : <RowMenu items={[
+                        { label: 'Sync now', onClick: () => run(c.id) },
+                        { label: 'Health check', onClick: () => healthCheck(c.id) },
+                        { label: expanded === c.id ? 'Hide jobs' : 'View jobs', onClick: () => toggleJobs(c.id) },
+                        {
+                          label: 'Edit',
+                          onClick: () => {
+                            setError('');
+                            setServerErrors({});
+                            setTestResult(null);
+                            setForm({
+                              id: c.id, name: c.name, type: c.type, enabled: c.enabled,
+                              cronSchedule: c.cronSchedule, priority: c.priority,
+                              maxRetries: c.maxRetries ?? 3, rateLimitPerMinute: c.rateLimitPerMinute,
+                              defaultSyncMode: c.defaultSyncMode,
+                              settingsText: Object.entries(c.settings ?? {})
+                                .map(([k, v]) => `${k}=${v}`).join('\n'),
+                              settingsFields: { ...(c.settings ?? {}) },
+                            });
+                          },
+                        },
+                        { label: 'Delete', onClick: () => remove(c.id, c.name), danger: true, separatorBefore: true },
+                      ]} />}
                 </td>
               </tr>
               {expanded === c.id && (
