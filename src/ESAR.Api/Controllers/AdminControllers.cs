@@ -387,7 +387,7 @@ public class AuditController : ControllerBase
         await Add<ConnectorConfig>(nameof(ConnectorConfig), _uow.Connectors, c => c.Name);
         await Add<CompliancePolicy>(nameof(CompliancePolicy), _uow.CompliancePolicies, p => p.Name);
         await Add<Incident>(nameof(Incident), _uow.Incidents, i => i.Title);
-        await Add<User>(nameof(User), _uow.Users, u => u.UserName);
+        await Add<User>(nameof(User), _uow.Users, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName);
         await Add<Role>(nameof(Role), _uow.Roles, r => r.Name);
         await Add<MatchingRule>(nameof(MatchingRule), _uow.MatchingRules, r => r.Name);
         await Add<Report>(nameof(Report), _uow.Reports, r => r.Name);
