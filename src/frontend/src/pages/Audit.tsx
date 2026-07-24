@@ -2,9 +2,13 @@ import { Fragment, useEffect, useState } from 'react';
 import client from '../api/client';
 import { formatDate } from '../components/Ui';
 
-// Runtime/system logs (Serilog) live in Seq; user-action audit lives here. Override the Seq
-// location at build time with VITE_SEQ_URL when it is not on localhost.
-const SEQ_URL = (import.meta as any).env?.VITE_SEQ_URL ?? 'http://localhost:5341';
+// Runtime/system logs (Serilog) live in Seq; user-action audit lives here. Default to the same
+// host the portal is served from — so the link works from any endpoint (server IP / domain), not
+// only localhost. Override with VITE_SEQ_URL for a reverse-proxied or custom Seq address.
+const SEQ_URL = (import.meta as any).env?.VITE_SEQ_URL
+  ?? (typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:5341`
+    : 'http://localhost:5341');
 
 type Tone = 'green' | 'red' | 'amber' | 'blue' | 'muted';
 
