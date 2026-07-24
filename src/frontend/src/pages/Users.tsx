@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import client from '../api/client';
-import { Badge, formatDate, Modal } from '../components/Ui';
+import { Badge, formatDate, Modal, RowMenu, type RowMenuItem } from '../components/Ui';
 import { useAuth } from '../auth/AuthContext';
 
 function ResetPasswordModal({ user, onClose, onDone, minPasswordLength }: {
@@ -315,6 +315,33 @@ export default function Users() {
               const deleteBlock = u.isProtected ? 'This is a protected account and cannot be deleted.'
                 : isSelf ? 'You cannot delete your own account.'
                 : isLastManager ? 'This is the last user with user-management permission.' : undefined;
+
+              // Every user operation lives in one kebab menu; items are built conditionally so
+              // protected accounts, non-local providers and unlocked users hide what doesn't apply.
+              const actions: RowMenuItem[] = [];
+              if (u.provider === 'Local' && isLocked)
+                actions.push({ label: 'Unlock', onClick: () => unlockUser(u) });
+              if (!u.isProtected) {
+                actions.push({ label: 'Edit (details & roles)', onClick: () => setEditUser(u) });
+                if (u.provider === 'Local')
+                  actions.push({
+                    label: 'Reset password',
+                    onClick: () => { setNotice(''); setResetUser({ id: u.id, username: u.username }); },
+                  });
+                actions.push({
+                  label: u.isActive ? 'Deactivate' : 'Activate',
+                  onClick: () => {
+                    if (!u.isActive ||
+                        window.confirm(`Deactivate "${u.username}"? They will no longer be able to sign in.`))
+                      toggleActive(u);
+                  },
+                });
+                actions.push({
+                  label: 'Delete', danger: true, separatorBefore: true,
+                  disabled: !!deleteBlock, title: deleteBlock,
+                  onClick: () => removeUser(u.id, u.username),
+                });
+              }
               return (
                 <tr key={u.id}>
                   <td>
@@ -337,35 +364,12 @@ export default function Users() {
                     </div>
                   </td>
                   <td className="muted">{formatDate(u.lastLoginAt)}</td>
-                  <td>
-                    {u.isProtected ? (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <span className="muted" style={{ fontSize: 12 }}>protected</span>
-                        {u.provider === 'Local' && isLocked && (
-                          <button className="secondary" onClick={() => unlockUser(u)}>Unlock</button>
-                        )}
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {u.provider === 'Local' && (
-                          <button className="secondary"
-                            onClick={() => { setNotice(''); setResetUser({ id: u.id, username: u.username }); }}>
-                            Reset password
-                          </button>
-                        )}
-                        {u.provider === 'Local' && isLocked && (
-                          <button className="secondary" onClick={() => unlockUser(u)}>Unlock</button>
-                        )}
-                        <button className="secondary" onClick={() => setEditUser(u)}>Edit</button>
-                        <button className="secondary" onClick={() => toggleActive(u)}>
-                          {u.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                        <button className="danger" disabled={!!deleteBlock} title={deleteBlock}
-                          onClick={() => removeUser(u.id, u.username)}>
-                          Delete
-                        </button>
-                      </div>
-                    )}
+                  <td style={{ textAlign: 'right' }}>
+                    {actions.length > 0
+                      ? <RowMenu items={actions} />
+                      : <span className="muted" style={{ fontSize: 12 }}>
+                          {u.isProtected ? 'protected' : '—'}
+                        </span>}
                   </td>
                 </tr>
               );
@@ -388,15 +392,14 @@ export default function Users() {
                 <td>{r.name} {r.isSystem && <span className="badge muted">system</span>}</td>
                 <td className="muted">{r.description}</td>
                 <td className="muted" style={{ maxWidth: 480 }}>{r.permissions?.join(', ')}</td>
-                <td>
+                <td style={{ textAlign: 'right' }}>
                   {r.isSystem
                     ? <span className="muted" style={{ fontSize: 12 }}>built-in</span>
-                    : (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <button className="secondary" onClick={() => setRoleModal(r)}>Edit</button>
-                        <button className="danger" onClick={() => removeRole(r.id, r.name)}>Delete</button>
-                      </div>
-                    )}
+                    : <RowMenu items={[
+                        { label: 'Edit', onClick: () => setRoleModal(r) },
+                        { label: 'Delete', danger: true, separatorBefore: true,
+                          onClick: () => removeRole(r.id, r.name) },
+                      ]} />}
                 </td>
               </tr>
             ))}
