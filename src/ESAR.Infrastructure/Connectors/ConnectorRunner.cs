@@ -5,6 +5,7 @@ using Esar.Application.Ingestion;
 using Esar.Application.Notifications;
 using Esar.Domain.Entities;
 using Esar.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Esar.Infrastructure.Connectors;
@@ -135,6 +136,25 @@ public class ConnectorRunner : IConnectorRunner
                 _uow.ConnectorJobs.Update(job);
                 _uow.Connectors.Update(config);
                 await _uow.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // The connector row was changed or deleted (e.g. removed from the UI) while it ran,
+                // so its UPDATE affected 0 rows. Finalize only the job — it must never stay stuck in
+                // Running — and skip the vanished connector instead of failing the whole Hangfire job.
+                _uow.ClearChangeTracker();
+                try
+                {
+                    _uow.ConnectorJobs.Update(job);
+                    await _uow.SaveChangesAsync(CancellationToken.None);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Connector and its jobs were removed together; nothing left to finalize.
+                }
+                _logger.LogInformation(
+                    "Connector {Id} was modified or removed during its run; job {JobId} finalized without a connector update.",
+                    config.Id, job.Id);
             }
             catch (Exception saveEx)
             {

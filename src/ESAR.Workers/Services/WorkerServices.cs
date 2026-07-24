@@ -5,6 +5,7 @@ using Esar.Domain.Enums;
 using Esar.Infrastructure.Messaging;
 using Esar.Workers.Jobs;
 using Hangfire;
+using Hangfire.Storage;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -69,11 +70,13 @@ public class JobSchedulerService : BackgroundService
         using var scope = _provider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var connectors = await uow.Connectors.ListAsync(null, ct);
+        var liveJobIds = new HashSet<string>();
         foreach (var connector in connectors)
         {
             var jobId = $"connector-{connector.Id:N}";
             if (connector.Enabled && !string.IsNullOrWhiteSpace(connector.CronSchedule))
             {
+                liveJobIds.Add(jobId);
                 var id = connector.Id;
                 _recurringJobs.AddOrUpdate<DiscoveryJobs>(jobId,
                     j => j.RunConnectorAsync(id, CancellationToken.None), connector.CronSchedule);
@@ -81,6 +84,20 @@ public class JobSchedulerService : BackgroundService
             else
             {
                 _recurringJobs.RemoveIfExists(jobId);
+            }
+        }
+
+        // Remove schedules for connectors that were deleted entirely (not just disabled). The loop
+        // above only touches connectors that still exist, so a deleted connector's recurring job
+        // would otherwise keep firing and failing with "Connector not found".
+        using var connection = JobStorage.Current.GetConnection();
+        foreach (var recurring in connection.GetRecurringJobs())
+        {
+            if (recurring.Id.StartsWith("connector-", StringComparison.Ordinal) &&
+                !liveJobIds.Contains(recurring.Id))
+            {
+                _recurringJobs.RemoveIfExists(recurring.Id);
+                _logger.LogInformation("Removed orphaned schedule {JobId} for a deleted connector", recurring.Id);
             }
         }
     }
