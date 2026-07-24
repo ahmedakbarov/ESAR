@@ -8,10 +8,13 @@ using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-Log.Logger = new LoggerConfiguration()
+var loggerConfig = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
-    .Enrich.WithProperty("Application", "esar-workers")
-    .CreateLogger();
+    .Enrich.WithProperty("Application", "esar-workers");
+// Ship to Seq too when configured, so worker/job logs land in the same searchable UI as the API.
+var seqUrl = builder.Configuration["Seq:ServerUrl"];
+if (!string.IsNullOrWhiteSpace(seqUrl)) loggerConfig.WriteTo.Seq(seqUrl);
+Log.Logger = loggerConfig.CreateLogger();
 builder.Services.AddSerilog();
 
 builder.Services.AddApplication();

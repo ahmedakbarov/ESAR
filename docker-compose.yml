@@ -46,6 +46,15 @@ services:
       timeout: 10s
       retries: 10
 
+  seq:
+    image: datalust/seq:2024.3
+    environment:
+      ACCEPT_EULA: "Y"
+    volumes:
+      - seq-data:/data
+    ports:
+      - "5341:80"   # Seq UI + ingestion — browse at http://localhost:5341
+
   esar-api:
     build:
       context: .
@@ -61,6 +70,7 @@ services:
       Security__EncryptionKey: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
       ESAR_ADMIN_INITIAL_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       Database__AutoMigrate: "true"
+      Seq__ServerUrl: http://seq
     volumes:
       - reports-data:/data/reports
     ports:
@@ -72,6 +82,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      seq:
+        condition: service_started
 
   esar-workers:
     build:
@@ -86,6 +98,7 @@ services:
       RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
       Security__EncryptionKey: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
       Database__AutoMigrate: "false"
+      Seq__ServerUrl: http://seq
     volumes:
       - reports-data:/data/reports
     depends_on:
@@ -93,6 +106,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      seq:
+        condition: service_started
       esar-api:
         # The API initializes the application schema. Starting Hangfire first
         # creates its tables and prevents EF EnsureCreated from creating ours.
@@ -112,3 +127,4 @@ volumes:
   redis-data:
   rabbitmq-data:
   reports-data:
+  seq-data:
