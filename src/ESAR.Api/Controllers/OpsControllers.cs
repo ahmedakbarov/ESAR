@@ -156,6 +156,27 @@ public class ReportsController : ControllerBase
     [Authorize("reports.read")]
     public IActionResult Types() => Ok(Enum.GetNames<ReportType>());
 
+    public record ReportTemplate(string Key, string Name, string Type, string DefaultFormat,
+        string Description, bool SupportsFilters);
+
+    // Curated, ready-to-run report definitions. Generating from a template creates a normal Report
+    // row (its own copy) — templates are just presets, they are not stored per-instance.
+    private static readonly ReportTemplate[] TemplateCatalog =
+    {
+        new("asset-inventory", "Asset Inventory", nameof(ReportType.AssetInventory), "Excel",
+            "Every asset with its OS, environment, owner, primary IP and compliance status.", true),
+        new("data-quality", "Data Quality", nameof(ReportType.DataQuality), "Excel",
+            "Assets ranked by data-quality score with their outstanding issues.", true),
+        new("connector-status", "Connector Status", nameof(ReportType.ConnectorStatus), "Excel",
+            "Every connector's health, schedule and last-run outcome.", false),
+        new("coverage", "Coverage", nameof(ReportType.Coverage), "Excel",
+            "Security-control coverage across the fleet — compliant vs non-compliant per control.", false),
+    };
+
+    [HttpGet("templates")]
+    [Authorize("reports.read")]
+    public IActionResult Templates() => Ok(TemplateCatalog);
+
     [HttpGet]
     [Authorize("reports.read")]
     public async Task<IActionResult> List(CancellationToken ct)
@@ -168,7 +189,8 @@ public class ReportsController : ControllerBase
         }));
     }
 
-    public record GenerateRequest(string Type, string Format = "Csv", string? Name = null);
+    public record GenerateRequest(string Type, string Format = "Csv", string? Name = null,
+        Dictionary<string, string>? Parameters = null);
 
     [HttpPost("generate")]
     [Authorize("reports.generate")]
@@ -184,6 +206,8 @@ public class ReportsController : ControllerBase
             Name = request.Name ?? $"{type} — {DateTime.UtcNow:yyyy-MM-dd HH:mm}",
             Type = type,
             Format = format,
+            ParametersJson = request.Parameters is { Count: > 0 }
+                ? System.Text.Json.JsonSerializer.Serialize(request.Parameters) : null,
             Status = JobStatus.Running,
             GeneratedBy = _user.UserName,
             CreatedBy = _user.UserName
@@ -210,6 +234,38 @@ public class ReportsController : ControllerBase
         return report.Status == JobStatus.Succeeded
             ? Ok(new { report.Id, status = "Succeeded" })
             : StatusCode(500, new { report.Id, status = "Failed", error = report.Error });
+    }
+
+    public record RenameRequest(string Name);
+
+    /// <summary>Renames a saved report.</summary>
+    [HttpPut("{id:guid}")]
+    [Authorize("reports.generate")]
+    public async Task<IActionResult> Rename(Guid id, [FromBody] RenameRequest request, CancellationToken ct)
+    {
+        var report = await _uow.Reports.GetByIdAsync(id, ct);
+        if (report is null) return NotFound();
+        if (string.IsNullOrWhiteSpace(request.Name)) return BadRequest(new { error = "Name is required." });
+        report.Name = request.Name.Trim();
+        _uow.Reports.Update(report);
+        await _uow.SaveChangesAsync(ct);
+        return Ok(new { report.Id, report.Name });
+    }
+
+    /// <summary>Deletes a saved report and its generated file.</summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize("reports.generate")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        var report = await _uow.Reports.GetByIdAsync(id, ct);
+        if (report is null) return NotFound();
+        if (report.FilePath is not null && System.IO.File.Exists(report.FilePath))
+            try { System.IO.File.Delete(report.FilePath); } catch { /* file cleanup is best-effort */ }
+        _uow.Reports.Remove(report);
+        await _uow.SaveChangesAsync(ct);
+        await _audit.LogAsync(AuditAction.ReportGenerated, nameof(Report), id.ToString(),
+            new { action = "deleted" }, ct);
+        return NoContent();
     }
 
     [HttpGet("{id:guid}/download")]

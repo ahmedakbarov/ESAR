@@ -31,7 +31,7 @@ public class ReportGenerator : IReportGenerator
                         ?? Path.Combine(Path.GetTempPath(), "esar-reports");
         Directory.CreateDirectory(outputDir);
 
-        var (headers, rows, title) = await BuildDataAsync(report.Type, ct);
+        var (headers, rows, title) = await BuildDataAsync(report, ct);
         var extension = report.Format switch
         {
             ReportFormat.Pdf => "pdf",
@@ -58,14 +58,51 @@ public class ReportGenerator : IReportGenerator
         return filePath;
     }
 
-    private async Task<(string[] Headers, List<string?[]> Rows, string Title)> BuildDataAsync(
-        ReportType type, CancellationToken ct)
+    /// <summary>Optional report filters, read from Report.ParametersJson.</summary>
+    private sealed record ReportFilters(string? Environment, string? Criticality, int? SeenSinceDays)
     {
+        public static ReportFilters Parse(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return new(null, null, null);
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                string? Str(string k) => root.TryGetProperty(k, out var v) &&
+                    v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+                int? Int(string k) => root.TryGetProperty(k, out var v) && v.TryGetInt32(out var n) ? n : null;
+                return new(Str("environment"), Str("criticality"), Int("seenSinceDays"));
+            }
+            catch (System.Text.Json.JsonException) { return new(null, null, null); }
+        }
+    }
+
+    /// <summary>Assets narrowed by the report's environment/criticality/freshness filters.</summary>
+    private IQueryable<Asset> FilteredAssets(ReportFilters f)
+    {
+        var q = _db.Assets.AsQueryable();
+        if (Enum.TryParse<EnvironmentType>(f.Environment, true, out var env) && env != EnvironmentType.Unknown)
+            q = q.Where(a => a.Environment == env);
+        if (Enum.TryParse<CriticalityLevel>(f.Criticality, true, out var crit) && crit != CriticalityLevel.Unknown)
+            q = q.Where(a => a.Criticality == crit);
+        if (f.SeenSinceDays is { } days && days > 0)
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-days);
+            q = q.Where(a => a.LastSeen >= cutoff);
+        }
+        return q;
+    }
+
+    private async Task<(string[] Headers, List<string?[]> Rows, string Title)> BuildDataAsync(
+        Report report, CancellationToken ct)
+    {
+        var type = report.Type;
+        var filters = ReportFilters.Parse(report.ParametersJson);
         switch (type)
         {
             case ReportType.AssetInventory:
             {
-                var assets = await _db.Assets.Include(a => a.IpAddresses).AsSplitQuery()
+                var assets = await FilteredAssets(filters).Include(a => a.IpAddresses).AsSplitQuery()
                     .OrderBy(a => a.Hostname).Take(50_000).ToListAsync(ct);
                 return (new[] { "Hostname", "FQDN", "OS", "Type", "Environment", "Criticality", "Status",
                         "Owner", "Business Unit", "Primary IP", "Compliance", "Last Seen" },
@@ -117,7 +154,7 @@ public class ReportGenerator : IReportGenerator
             }
             case ReportType.CloudAssets:
             {
-                var assets = await _db.Assets.Where(a => a.CloudProvider != null)
+                var assets = await FilteredAssets(filters).Where(a => a.CloudProvider != null)
                     .OrderBy(a => a.CloudProvider).ThenBy(a => a.Hostname).Take(50_000).ToListAsync(ct);
                 return (new[] { "Hostname", "Provider", "Region", "Subscription/Account", "Resource ID", "Compliance" },
                     assets.Select(a => new[]
@@ -165,6 +202,48 @@ public class ReportGenerator : IReportGenerator
                         .Cast<string?[]>().ToList(),
                     type == ReportType.AssetOwners ? "Assets by Owner" : "Assets by Business Unit");
             }
+            case ReportType.DataQuality:
+            {
+                var assets = await FilteredAssets(filters)
+                    .OrderBy(a => a.DataQualityScore).ThenBy(a => a.Hostname).Take(50_000).ToListAsync(ct);
+                return (new[] { "Hostname", "Type", "Environment", "Criticality", "DQ Score", "Issues" },
+                    assets.Select(a => new[]
+                    {
+                        a.Hostname, a.AssetType.ToString(), a.Environment.ToString(), a.Criticality.ToString(),
+                        a.DataQualityScore.ToString("0"), SummarizeDqIssues(a.DataQualityIssuesJson)
+                    }).ToList(), "Data Quality");
+            }
+            case ReportType.ConnectorStatus:
+            {
+                var connectors = await _db.Connectors.OrderBy(c => c.Name).ToListAsync(ct);
+                return (new[] { "Name", "Type", "Enabled", "Healthy", "Schedule", "Last Run", "Last Status", "Health Message" },
+                    connectors.Select(c => new[]
+                    {
+                        c.Name, c.Type.ToString(), c.Enabled ? "Yes" : "No", c.IsHealthy ? "Yes" : "No",
+                        c.CronSchedule, c.LastRunAt?.ToString("yyyy-MM-dd HH:mm"),
+                        c.LastRunStatus?.ToString(), c.LastHealthMessage
+                    }).ToList(), "Connector Status");
+            }
+            case ReportType.Coverage:
+            {
+                var grouped = await _db.AssetCompliance
+                    .GroupBy(c => c.Control)
+                    .Select(g => new
+                    {
+                        Control = g.Key,
+                        Compliant = g.Count(c => c.Status == ComplianceStatus.Compliant),
+                        NonCompliant = g.Count(c => c.Status == ComplianceStatus.NonCompliant),
+                        Pending = g.Count(c => c.Status == ComplianceStatus.Pending || c.Status == ComplianceStatus.Unknown),
+                        Total = g.Count()
+                    })
+                    .OrderBy(g => g.Control).ToListAsync(ct);
+                return (new[] { "Control", "Compliant", "Non-Compliant", "Pending", "Coverage %" },
+                    grouped.Select(g => new[]
+                    {
+                        g.Control.ToString(), g.Compliant.ToString(), g.NonCompliant.ToString(), g.Pending.ToString(),
+                        g.Total == 0 ? "0" : Math.Round(100.0 * g.Compliant / g.Total, 1).ToString("0.0")
+                    }).Cast<string?[]>().ToList(), "Control Coverage");
+            }
             case ReportType.ExecutiveSummary:
             default:
             {
@@ -183,6 +262,21 @@ public class ReportGenerator : IReportGenerator
                 return (new[] { "Metric", "Value" }, rows, "Executive Summary");
             }
         }
+    }
+
+    /// <summary>Condenses the stored DQ issue list into a readable "CODE (penalty)" summary.</summary>
+    private static string SummarizeDqIssues(string? issuesJson)
+    {
+        if (string.IsNullOrWhiteSpace(issuesJson)) return string.Empty;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(issuesJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return string.Empty;
+            return string.Join("; ", doc.RootElement.EnumerateArray()
+                .Select(e => e.TryGetProperty("Code", out var c) ? c.GetString() : null)
+                .Where(c => !string.IsNullOrEmpty(c)));
+        }
+        catch (System.Text.Json.JsonException) { return string.Empty; }
     }
 
     private static async Task WriteCsvAsync(string path, string[] headers, List<string?[]> rows, CancellationToken ct)
