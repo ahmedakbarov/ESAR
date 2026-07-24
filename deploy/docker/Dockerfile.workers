@@ -8,6 +8,9 @@ COPY src/ESAR.Infrastructure/ESAR.Infrastructure.csproj src/ESAR.Infrastructure/
 COPY src/ESAR.Workers/ESAR.Workers.csproj src/ESAR.Workers/
 RUN dotnet restore src/ESAR.Workers/ESAR.Workers.csproj
 COPY src/ src/
+# ESAR.Infrastructure embeds db/*.sql schema-upgrade scripts (e.g. 009_match_merge_safety.sql)
+# as resources, so the db/ folder must be present in the build context at publish time.
+COPY db/ db/
 RUN dotnet publish src/ESAR.Workers/ESAR.Workers.csproj -c Release -o /app/publish /p:UseAppHost=false
 
 # ---- runtime ----

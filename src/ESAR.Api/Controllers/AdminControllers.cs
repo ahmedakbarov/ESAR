@@ -319,7 +319,7 @@ public class AuditController : ControllerBase
     [HttpGet]
     [Authorize("audit.read")]
     public async Task<IActionResult> List([FromQuery] string? action, [FromQuery] string? user,
-        [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] bool excludeApiCalls = false,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 100, CancellationToken ct = default)
     {
         var hasAction = Enum.TryParse<AuditAction>(action, true, out var act);
@@ -329,6 +329,9 @@ public class AuditController : ControllerBase
             if (from != null) q = q.Where(l => l.Timestamp >= from);
             if (to != null) q = q.Where(l => l.Timestamp <= to);
             if (hasAction) q = q.Where(l => l.Action == act);
+            // ApiCall rows mirror the underlying domain event and otherwise drown out real user
+            // actions; the audit UI hides them by default via this flag.
+            else if (excludeApiCalls) q = q.Where(l => l.Action != AuditAction.ApiCall);
             if (!string.IsNullOrWhiteSpace(user))
             {
                 var term = user.ToLower();

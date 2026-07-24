@@ -17,10 +17,17 @@ using Serilog;
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------- Logging (Serilog, structured) ----------
-builder.Host.UseSerilog((context, config) => config
-    .ReadFrom.Configuration(context.Configuration)
-    .Enrich.FromLogContext()
-    .Enrich.WithProperty("Application", "esar-api"));
+builder.Host.UseSerilog((context, config) =>
+{
+    config
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "esar-api");
+    // When a Seq server is configured (Seq:ServerUrl / Seq__ServerUrl), ship structured logs
+    // there too for a searchable, live runtime-log UI. Absent in local dev = console + file only.
+    var seqUrl = context.Configuration["Seq:ServerUrl"];
+    if (!string.IsNullOrWhiteSpace(seqUrl)) config.WriteTo.Seq(seqUrl);
+});
 
 // ---------- Services ----------
 builder.Services.AddApplication();
