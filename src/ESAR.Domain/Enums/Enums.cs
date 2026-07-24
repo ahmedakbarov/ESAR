@@ -286,5 +286,8 @@ public enum ReportType
     CloudAssets,
     AssetOwners,
     BusinessUnits,
-    ExecutiveSummary
+    ExecutiveSummary,
+    DataQuality,
+    ConnectorStatus,
+    Coverage
 }
