@@ -47,6 +47,9 @@ public class CompliancePolicy : AuditableEntity
     public string AppliesToIpRangesJson { get; set; } = "[]";
     /// <summary>jsonb array of cloud subscription ids; empty = any subscription.</summary>
     public string AppliesToSubscriptionsJson { get; set; } = "[]";
+    /// <summary>jsonb array of AssetGroup ids (as strings); empty = no group constraint. Matches if the
+    /// asset belongs to any listed group.</summary>
+    public string AppliesToGroupsJson { get; set; } = "[]";
 
     // --- Requirements ---
     /// <summary>jsonb array of ControlType names that are evaluated for matching assets.</summary>

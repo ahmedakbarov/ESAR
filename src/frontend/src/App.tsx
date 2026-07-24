@@ -9,6 +9,7 @@ import Compliance from './pages/Compliance';
 import Matching from './pages/Matching';
 import Connectors from './pages/Connectors';
 import Policies from './pages/Policies';
+import Groups from './pages/Groups';
 import Approvals from './pages/Approvals';
 import Incidents from './pages/Incidents';
 import Reports from './pages/Reports';
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="matching" element={<Matching />} />
           <Route path="connectors" element={<Navigate to="/settings/integrations" replace />} />
           <Route path="policies" element={<Policies />} />
+          <Route path="groups" element={<Groups />} />
           <Route path="approvals" element={<Approvals />} />
           <Route path="incidents" element={<Incidents />} />
           <Route path="reports" element={<Reports />} />

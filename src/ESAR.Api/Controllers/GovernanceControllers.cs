@@ -112,7 +112,7 @@ public class PoliciesController : ControllerBase
     public record PolicyRequest(string Name, string? Description, bool Enabled, int Priority,
         List<string> AppliesToAssetTypes, List<string> AppliesToEnvironments, string? MinCriticality,
         List<string> AppliesToConnectors, List<string> AppliesToTags, List<string> AppliesToHostnamePatterns,
-        List<string> AppliesToIpRanges, List<string> AppliesToSubscriptions,
+        List<string> AppliesToIpRanges, List<string> AppliesToSubscriptions, List<string>? AppliesToGroups,
         List<string> RequiredControls, List<string> MandatoryControls);
 
     [HttpPost]
@@ -192,6 +192,9 @@ public class PoliciesController : ControllerBase
         foreach (var range in request.AppliesToIpRanges)
             if (!PolicyScopeMatcher.TryParseCidr(range, out _))
                 return $"Invalid IP range '{range}'. Use CIDR notation, e.g. 10.0.0.0/8.";
+        foreach (var group in request.AppliesToGroups ?? new List<string>())
+            if (!Guid.TryParse(group, out _))
+                return $"Invalid asset group id '{group}'.";
         return null;
     }
 
@@ -210,6 +213,7 @@ public class PoliciesController : ControllerBase
         policy.AppliesToHostnamePatternsJson = JsonSerializer.Serialize(request.AppliesToHostnamePatterns);
         policy.AppliesToIpRangesJson = JsonSerializer.Serialize(request.AppliesToIpRanges);
         policy.AppliesToSubscriptionsJson = JsonSerializer.Serialize(request.AppliesToSubscriptions);
+        policy.AppliesToGroupsJson = JsonSerializer.Serialize(request.AppliesToGroups ?? new List<string>());
         policy.RequiredControlsJson = JsonSerializer.Serialize(request.RequiredControls);
         policy.MandatoryControlsJson = JsonSerializer.Serialize(request.MandatoryControls);
     }
@@ -232,6 +236,7 @@ public class PoliciesController : ControllerBase
         AppliesToHostnamePatterns = JsonSerializer.Deserialize<List<string>>(p.AppliesToHostnamePatternsJson),
         AppliesToIpRanges = JsonSerializer.Deserialize<List<string>>(p.AppliesToIpRangesJson),
         AppliesToSubscriptions = JsonSerializer.Deserialize<List<string>>(p.AppliesToSubscriptionsJson),
+        AppliesToGroups = JsonSerializer.Deserialize<List<string>>(p.AppliesToGroupsJson),
         RequiredControls = JsonSerializer.Deserialize<List<string>>(p.RequiredControlsJson),
         MandatoryControls = JsonSerializer.Deserialize<List<string>>(p.MandatoryControlsJson),
         p.UpdatedAt, p.UpdatedBy

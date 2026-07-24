@@ -58,6 +58,8 @@ public interface IUnitOfWork
     IRepository<AssetCompliance> AssetCompliance { get; }
     IRepository<AssetRelationship> Relationships { get; }
     IRepository<CompliancePolicy> CompliancePolicies { get; }
+    IRepository<AssetGroup> AssetGroups { get; }
+    IRepository<AssetGroupMember> AssetGroupMembers { get; }
     IRepository<ApprovalRequest> Approvals { get; }
     IRepository<MatchingRule> MatchingRules { get; }
     IRepository<MatchRecord> MatchRecords { get; }

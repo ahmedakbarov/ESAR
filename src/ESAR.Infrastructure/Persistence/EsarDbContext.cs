@@ -37,6 +37,8 @@ public class EsarDbContext : DbContext
     public DbSet<AssetRelationship> AssetRelationships => Set<AssetRelationship>();
     public DbSet<CompliancePolicy> CompliancePolicies => Set<CompliancePolicy>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<AssetGroup> AssetGroups => Set<AssetGroup>();
+    public DbSet<AssetGroupMember> AssetGroupMembers => Set<AssetGroupMember>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -296,6 +298,26 @@ public class EsarDbContext : DbContext
             e.Property(x => x.AppliesToSubscriptionsJson).HasColumnType("jsonb");
             e.Property(x => x.RequiredControlsJson).HasColumnType("jsonb");
             e.Property(x => x.MandatoryControlsJson).HasColumnType("jsonb");
+            e.Property(x => x.AppliesToGroupsJson).HasColumnType("jsonb");
+        });
+
+        b.Entity<AssetGroup>(e =>
+        {
+            e.ToTable("asset_groups");
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(1024);
+            e.HasMany(x => x.Members).WithOne(x => x.Group!)
+                .HasForeignKey(x => x.AssetGroupId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<AssetGroupMember>(e =>
+        {
+            e.ToTable("asset_group_members");
+            e.HasKey(x => new { x.AssetGroupId, x.AssetId });
+            e.HasIndex(x => x.AssetId);
+            e.HasOne(x => x.Asset).WithMany(x => x!.GroupMemberships)
+                .HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<ApprovalRequest>(e =>

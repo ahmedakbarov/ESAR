@@ -22,6 +22,7 @@ public sealed class CompiledPolicyScope
     public IReadOnlyList<Regex> HostnamePatterns { get; }
     public IReadOnlyList<IPNetwork> IpRanges { get; }
     public IReadOnlyList<string> Subscriptions { get; }
+    public IReadOnlyList<Guid> Groups { get; }
 
     private CompiledPolicyScope(CompliancePolicy policy)
     {
@@ -37,6 +38,9 @@ public sealed class CompiledPolicyScope
             .Select(r => PolicyScopeMatcher.TryParseCidr(r, out var n) ? n : (IPNetwork?)null)
             .Where(n => n is not null).Select(n => n!.Value).ToList();
         Subscriptions = PolicyScopeMatcher.ParseStrings(policy.AppliesToSubscriptionsJson);
+        Groups = PolicyScopeMatcher.ParseStrings(policy.AppliesToGroupsJson)
+            .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+            .Where(g => g is not null).Select(g => g!.Value).ToList();
     }
 
     public static CompiledPolicyScope From(CompliancePolicy policy) => new(policy);
@@ -60,8 +64,12 @@ public static class PolicyScopeMatcher
         if (!MatchesHostnames(scope.HostnamePatterns, asset.NormalizedHostname)) return false;
         if (!MatchesIpRanges(scope.IpRanges, asset.IpAddresses.Where(ip => ip.IsActive).ToList())) return false;
         if (!MatchesSet(scope.Subscriptions, asset.CloudSubscriptionId)) return false;
+        if (!MatchesGroups(scope.Groups, asset.GroupMemberships)) return false;
         return true;
     }
+
+    private static bool MatchesGroups(IReadOnlyList<Guid> groups, ICollection<AssetGroupMember> memberships)
+        => groups.Count == 0 || memberships.Any(m => groups.Contains(m.AssetGroupId));
 
     /// <summary>Convenience overload for tests and one-off checks — compiles the policy on every
     /// call. PolicyEngine's evaluation hot path uses the CompiledPolicyScope overload instead,

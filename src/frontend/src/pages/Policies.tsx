@@ -32,6 +32,7 @@ interface PolicyForm {
   appliesToHostnamePatterns: string[];
   appliesToIpRanges: string[];
   appliesToSubscriptions: string[];
+  appliesToGroups: string[];
   requiredControls: string[];
   mandatoryControls: string[];
 }
@@ -40,14 +41,14 @@ const emptyForm: PolicyForm = {
   name: '', description: '', enabled: true, priority: 100,
   appliesToAssetTypes: [], appliesToEnvironments: [], minCriticality: '',
   appliesToConnectors: [], appliesToTags: [], appliesToHostnamePatterns: [],
-  appliesToIpRanges: [], appliesToSubscriptions: [],
+  appliesToIpRanges: [], appliesToSubscriptions: [], appliesToGroups: [],
   requiredControls: [], mandatoryControls: [],
 };
 
 interface ScopeLike {
   appliesToAssetTypes?: string[]; appliesToEnvironments?: string[]; minCriticality?: string | null;
   appliesToConnectors?: string[]; appliesToTags?: string[]; appliesToHostnamePatterns?: string[];
-  appliesToIpRanges?: string[]; appliesToSubscriptions?: string[];
+  appliesToIpRanges?: string[]; appliesToSubscriptions?: string[]; appliesToGroups?: string[];
 }
 
 function plural(n: number, word: string) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
@@ -67,16 +68,21 @@ function summarizeScope(p: ScopeLike): string {
   if (p.appliesToHostnamePatterns?.length) parts.push(plural(p.appliesToHostnamePatterns.length, 'hostname pattern'));
   if (p.appliesToIpRanges?.length) parts.push(plural(p.appliesToIpRanges.length, 'IP range'));
   if (p.appliesToSubscriptions?.length) parts.push(plural(p.appliesToSubscriptions.length, 'subscription'));
+  if (p.appliesToGroups?.length) parts.push(plural(p.appliesToGroups.length, 'group'));
   return parts.length === 0 ? 'all assets' : parts.join(' · ');
 }
 
 export default function Policies() {
   const [policies, setPolicies] = useState<any[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
   const [form, setForm] = useState<PolicyForm | null>(null);
   const [error, setError] = useState('');
 
   const load = () => client.get('/policies').then((r) => setPolicies(r.data));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    client.get('/asset-groups').then((r) => setGroups(r.data)).catch(() => undefined);
+  }, []);
 
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -113,6 +119,7 @@ export default function Policies() {
       appliesToHostnamePatterns: form.appliesToHostnamePatterns,
       appliesToIpRanges: form.appliesToIpRanges,
       appliesToSubscriptions: form.appliesToSubscriptions,
+      appliesToGroups: form.appliesToGroups,
       requiredControls: form.requiredControls,
       mandatoryControls: form.mandatoryControls,
     };
@@ -148,6 +155,7 @@ export default function Policies() {
     appliesToHostnamePatterns: p.appliesToHostnamePatterns ?? [],
     appliesToIpRanges: p.appliesToIpRanges ?? [],
     appliesToSubscriptions: p.appliesToSubscriptions ?? [],
+    appliesToGroups: p.appliesToGroups ?? [],
     requiredControls: p.requiredControls ?? [], mandatoryControls: p.mandatoryControls ?? [],
   });
 
@@ -273,6 +281,22 @@ export default function Policies() {
                 <ChipListInput values={form.appliesToSubscriptions}
                   onChange={(v) => setForm({ ...form, appliesToSubscriptions: v })}
                   placeholder="subscription id — Enter to add" />
+              </div>
+            </details>
+
+            <details open={form.appliesToGroups.length > 0} style={{ marginBottom: 10 }}>
+              <summary>Asset groups (empty = no group constraint)</summary>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0' }}>
+                {groups.map((g) => (
+                  <button key={g.id} type="button"
+                    className={form.appliesToGroups.includes(g.id) ? '' : 'secondary'}
+                    onClick={() => setForm({ ...form, appliesToGroups: toggle(form.appliesToGroups, g.id) })}>
+                    {g.name}
+                  </button>
+                ))}
+                {groups.length === 0 && (
+                  <span className="muted">No groups yet — create them on the Asset Groups page.</span>
+                )}
               </div>
             </details>
 

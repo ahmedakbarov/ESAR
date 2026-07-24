@@ -73,5 +73,6 @@ public class Asset : AuditableEntity
     public ICollection<AssetSoftware> Software { get; set; } = new List<AssetSoftware>();
     public ICollection<AssetCompliance> ComplianceRecords { get; set; } = new List<AssetCompliance>();
     public ICollection<AssetEvent> Events { get; set; } = new List<AssetEvent>();
+    public ICollection<AssetGroupMember> GroupMemberships { get; set; } = new List<AssetGroupMember>();
     public AssetRisk? Risk { get; set; }
 }

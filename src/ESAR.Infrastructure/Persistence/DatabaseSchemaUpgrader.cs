@@ -8,7 +8,8 @@ internal static class DatabaseSchemaUpgrader
 {
     private static readonly string[] Resources =
     {
-        "Esar.Infrastructure.Database.009_match_merge_safety.sql"
+        "Esar.Infrastructure.Database.009_match_merge_safety.sql",
+        "Esar.Infrastructure.Database.010_asset_groups.sql"
     };
 
     public static async Task ApplyAsync(EsarDbContext db, ILogger logger, CancellationToken ct)

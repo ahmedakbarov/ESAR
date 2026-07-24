@@ -68,6 +68,7 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
         .Include(a => a.Tags)
         .Include(a => a.ComplianceRecords)
         .Include(a => a.Software)
+        .Include(a => a.GroupMemberships)
         .Include(a => a.Risk);
 
     public Task<Asset?> GetWithDetailsAsync(Guid id, CancellationToken ct = default)
@@ -282,6 +283,8 @@ public class UnitOfWork : IUnitOfWork
         AssetCompliance = new GenericRepository<AssetCompliance>(db);
         Relationships = new GenericRepository<AssetRelationship>(db);
         CompliancePolicies = new GenericRepository<CompliancePolicy>(db);
+        AssetGroups = new GenericRepository<AssetGroup>(db);
+        AssetGroupMembers = new GenericRepository<AssetGroupMember>(db);
         Approvals = new GenericRepository<ApprovalRequest>(db);
         MatchingRules = new GenericRepository<MatchingRule>(db);
         MatchRecords = new GenericRepository<MatchRecord>(db);
@@ -313,6 +316,8 @@ public class UnitOfWork : IUnitOfWork
     public IRepository<AssetCompliance> AssetCompliance { get; }
     public IRepository<AssetRelationship> Relationships { get; }
     public IRepository<CompliancePolicy> CompliancePolicies { get; }
+    public IRepository<AssetGroup> AssetGroups { get; }
+    public IRepository<AssetGroupMember> AssetGroupMembers { get; }
     public IRepository<ApprovalRequest> Approvals { get; }
     public IRepository<MatchingRule> MatchingRules { get; }
     public IRepository<MatchRecord> MatchRecords { get; }

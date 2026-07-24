@@ -91,6 +91,7 @@ export default function Layout() {
           <NavLink to="/reports">Reports</NavLink>
           <div className="section">Governance</div>
           <NavLink to="/policies">Policies</NavLink>
+          <NavLink to="/groups">Asset Groups</NavLink>
           <div className="section">Administration</div>
           <NavLink to="/settings">Settings</NavLink>
           <div className="sidebar-subnav">

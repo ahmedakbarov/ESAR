@@ -25,5 +25,7 @@
   <ItemGroup>
     <EmbeddedResource Include="..\..\db\009_match_merge_safety.sql"
                       LogicalName="Esar.Infrastructure.Database.009_match_merge_safety.sql" />
+    <EmbeddedResource Include="..\..\db\010_asset_groups.sql"
+                      LogicalName="Esar.Infrastructure.Database.010_asset_groups.sql" />
   </ItemGroup>
 </Project>
