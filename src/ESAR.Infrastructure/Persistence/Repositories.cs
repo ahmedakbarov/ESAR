@@ -145,6 +145,32 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
                 : query.Where(a => a.Tags.Any(t => t.Key == c.TagKey && t.Value == c.TagValue));
         }
 
+        // Excel-style multi-select column filters: OR inside one column, AND across columns.
+        var types = ParseEnums<AssetType>(c.AssetTypes);
+        if (types.Count > 0) query = query.Where(a => types.Contains(a.AssetType));
+        var statuses = ParseEnums<AssetStatus>(c.Statuses);
+        if (statuses.Count > 0) query = query.Where(a => statuses.Contains(a.Status));
+        var lifecycles = ParseEnums<LifecycleStatus>(c.LifecycleStatuses);
+        if (lifecycles.Count > 0) query = query.Where(a => lifecycles.Contains(a.LifecycleStatus));
+        var environments = ParseEnums<EnvironmentType>(c.Environments);
+        if (environments.Count > 0) query = query.Where(a => environments.Contains(a.Environment));
+        var criticalities = ParseEnums<CriticalityLevel>(c.Criticalities);
+        if (criticalities.Count > 0) query = query.Where(a => criticalities.Contains(a.Criticality));
+        var compliances = ParseEnums<ComplianceStatus>(c.ComplianceStatuses);
+        if (compliances.Count > 0) query = query.Where(a => compliances.Contains(a.ComplianceStatus));
+        var sources = ParseEnums<ConnectorType>(c.Sources);
+        if (sources.Count > 0) query = query.Where(a => a.Sources.Any(s => sources.Contains(s.ConnectorType)));
+        if (c.OsNames is { Count: > 0 })
+        {
+            var osNames = c.OsNames.Where(o => !string.IsNullOrWhiteSpace(o)).ToList();
+            if (osNames.Count > 0) query = query.Where(a => a.OperatingSystem != null && osNames.Contains(a.OperatingSystem));
+        }
+        if (c.BusinessUnits is { Count: > 0 })
+        {
+            var units = c.BusinessUnits.Where(u => !string.IsNullOrWhiteSpace(u)).ToList();
+            if (units.Count > 0) query = query.Where(a => a.BusinessUnit != null && units.Contains(a.BusinessUnit));
+        }
+
         query = ApplySort(query, c.SortBy, c.SortDescending);
 
         var total = await query.LongCountAsync(ct);
@@ -249,12 +275,75 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
             "firstseen" => a => a.FirstSeen,
             "criticality" => a => a.Criticality,
             "compliancescore" => a => a.ComplianceScore,
+            "compliancestatus" => a => a.ComplianceStatus,
             "assettype" => a => a.AssetType,
             "environment" => a => a.Environment,
             "status" => a => a.Status,
+            "os" => a => a.OperatingSystem ?? "",
+            "owner" => a => a.OwnerName ?? "",
+            "businessunit" => a => a.BusinessUnit ?? "",
+            "dataqualityscore" => a => a.DataQualityScore,
+            "healthscore" => a => a.HealthScore,
             _ => a => a.NormalizedHostname
         };
-        return desc ? query.OrderByDescending(key) : query.OrderBy(key);
+        // Stable tiebreaker so identical sort keys page deterministically.
+        var ordered = desc ? query.OrderByDescending(key) : query.OrderBy(key);
+        return ordered.ThenBy(a => a.Id);
+    }
+
+    public async Task<List<FilterValue>> ListFilterValuesAsync(string field, CancellationToken ct = default)
+    {
+        // Distinct values of one column across non-deleted assets (the global query filter
+        // excludes soft-deleted rows), counted database-side for the column filter dropdowns.
+        // Enum keys are grouped in SQL and stringified after materialization — enum ToString()
+        // inside a projection is not reliably translatable.
+        async Task<List<FilterValue>> GroupEnumAsync<TKey>(Expression<Func<Asset, TKey>> key) where TKey : struct
+        {
+            var rows = await Db.Assets.GroupBy(key)
+                .Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+            return Shape(rows.Select(r => (r.Key.ToString()!, r.Count)));
+        }
+
+        switch (field.ToLowerInvariant())
+        {
+            case "assettype": return await GroupEnumAsync(a => a.AssetType);
+            case "status": return await GroupEnumAsync(a => a.Status);
+            case "lifecyclestatus": return await GroupEnumAsync(a => a.LifecycleStatus);
+            case "environment": return await GroupEnumAsync(a => a.Environment);
+            case "criticality": return await GroupEnumAsync(a => a.Criticality);
+            case "compliancestatus": return await GroupEnumAsync(a => a.ComplianceStatus);
+            case "source":
+            {
+                var rows = await Db.AssetSources
+                    .Where(s => s.Asset != null && !s.Asset.IsDeleted)
+                    .GroupBy(s => s.ConnectorType)
+                    .Select(g => new { g.Key, Count = g.Select(s => s.AssetId).Distinct().Count() })
+                    .ToListAsync(ct);
+                return Shape(rows.Select(r => (r.Key.ToString(), r.Count)));
+            }
+            case "os":
+            {
+                var rows = await Db.Assets.Where(a => a.OperatingSystem != null)
+                    .GroupBy(a => a.OperatingSystem!)
+                    .Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+                return Shape(rows.Select(r => (r.Key, r.Count)));
+            }
+            case "businessunit":
+            {
+                var rows = await Db.Assets.Where(a => a.BusinessUnit != null)
+                    .GroupBy(a => a.BusinessUnit!)
+                    .Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+                return Shape(rows.Select(r => (r.Key, r.Count)));
+            }
+            default:
+                return new List<FilterValue>();
+        }
+
+        static List<FilterValue> Shape(IEnumerable<(string Value, int Count)> rows) => rows
+            .Where(r => !string.IsNullOrWhiteSpace(r.Value))
+            .Select(r => new FilterValue(r.Value, r.Count))
+            .OrderBy(v => v.Value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static bool TryEnum<TEnum>(string? value, out TEnum result) where TEnum : struct
@@ -263,6 +352,13 @@ public class AssetRepository : GenericRepository<Asset>, IAssetRepository
         result = default;
         return false;
     }
+
+    private static List<TEnum> ParseEnums<TEnum>(List<string>? values) where TEnum : struct
+        => values is null
+            ? new List<TEnum>()
+            : values.Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => Enum.TryParse<TEnum>(v, true, out var parsed) ? parsed : (TEnum?)null)
+                .Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
 }
 
 public class UnitOfWork : IUnitOfWork
