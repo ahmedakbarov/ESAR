@@ -108,3 +108,43 @@ export function Modal({ title, onClose, children }: {
     </div>
   );
 }
+
+export interface RowMenuItem {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  title?: string;
+  /// Draws a divider above this item — use to separate destructive actions.
+  separatorBefore?: boolean;
+}
+
+/// Kebab (three-dot) row-action menu. Renders nothing when there are no items, so callers can
+/// build the item list conditionally (permissions, protected accounts, …) and let it collapse.
+export function RowMenu({ items, disabled }: { items: RowMenuItem[]; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (items.length === 0) return null;
+  return (
+    <span className="row-menu">
+      <button type="button" className="kebab" disabled={disabled} aria-label="Actions"
+        onClick={() => setOpen(!open)}>⋯</button>
+      {open && (
+        <>
+          <div className="row-menu-overlay" onClick={() => setOpen(false)} />
+          <div className="menu">
+            {items.map((item) => (
+              <span key={item.label} style={{ display: 'contents' }}>
+                {item.separatorBefore && <div className="separator" />}
+                <button type="button" className={item.danger ? 'danger-item' : undefined}
+                  disabled={item.disabled} title={item.title}
+                  onClick={() => { setOpen(false); item.onClick(); }}>
+                  {item.label}
+                </button>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
